@@ -1,0 +1,11 @@
+[gd_resource type="StandardMaterial3D" format=3]
+
+[ext_resource type="Texture2D" path="res://assets/tex/i46_posters.png" id="1_d6kg1"]
+
+[resource]
+albedo_texture = ExtResource("1_d6kg1")
+roughness = 0.5
+emission_enabled = true
+emission = Color(0.26666668, 0.33333334, 0.4, 1)
+emission_energy_multiplier = 0.55
+texture_filter = 5

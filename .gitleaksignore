@@ -1,0 +1,3 @@
+# false positives: save-slot key name (not a secret)
+scripts/sim/s00_core.gd:generic-api-key:9
+scripts/game_main.gd:generic-api-key:5

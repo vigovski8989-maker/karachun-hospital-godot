@@ -1,0 +1,11 @@
+[gd_resource type="StandardMaterial3D" format=3]
+
+[ext_resource type="Texture2D" path="res://assets/tex/monitor_ui.png" id="1_60j4y"]
+
+[resource]
+albedo_texture = ExtResource("1_60j4y")
+roughness = 0.45
+emission_enabled = true
+emission = Color(0.13333334, 0.26666668, 0.4, 1)
+emission_energy_multiplier = 0.55
+texture_filter = 5

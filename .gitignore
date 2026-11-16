@@ -1,0 +1,22 @@
+# Godot
+.godot/
+*.tmp
+# exports / builds
+export/
+exports/
+dist/
+build/
+*.apk
+*.aab
+*.exe
+*.pck
+*.zip
+# signing keys & secrets — never commit
+keys/
+*.keystore
+*.jks
+*.p12
+*.pem
+*.key
+.env
+export_credentials.cfg
