@@ -61,14 +61,13 @@ func wanted() -> Array:
 	# most common cures first, cheaper first on ties
 	cures.sort_custom(func(a, b): return freq[a] > freq[b] or (freq[a] == freq[b] and sim.drm(a).cost < sim.drm(b).cost))
 	var dg = []
-	# the gp->diag hand-off in finish() only uses diag/lab (xray is reached only through the low-chance re-check),
-	# so the primary diagnosis room is diag (.35/visit, +$100) — lab only when the level has no scanner
-	for t in ["diag", "lab"]:
+	# finish() picks the shorter queue of diag/lab, so both share the load: lab (cheap, 7 s, standing) first, then diag
+	for t in ["lab", "diag"]:
 		if rooms.has(t) and sim.D.rooms.has(t): dg.append(t)
-	if dg.size() > 1: dg.erase("lab")
 	var out = ["reception", "gp", cheap[0] if cheap.size() else "pharmacy", "toilet", "staffroom"]
 	if dg.size(): out.append(dg[0])
 	out.append("gp")
+	if dg.size() > 1: out.append(dg[1])
 	if l.get("locked") and rooms.has("research"): out.append("research")
 	# other cure rooms: built on demand (demand()), or ahead of time only when cash is comfortable
 	var rich = sim.S.day > 30 and sim.S.money > 60000 + sim.S.staff.size() * 900
