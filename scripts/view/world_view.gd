@@ -129,8 +129,8 @@ func rebuild() -> void:
 		lab2.font = UIKit.font_800
 		lab2.modulate = Color(1, 1, 1, 0.92)
 		lab2.width = 400; lab2.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-		# centre of the room, just above the wall tops (not on the back wall where it ran off-screen)
-		lab2.position = Vector3(r.x + r.w / 2.0, WorldBuild.HB + 0.15, r.y + r.h / 2.0)
+		# middle of the back wall, just above the wall top: never on top of people (0.9.5)
+		lab2.position = Vector3(r.x + r.w / 2.0, WorldBuild.HB + 0.38, r.y + 0.12)
 		dyn_root.add_child(lab2)
 		labels[r.id] = lab2
 		if r.type == "lab": _lab_stool(r)
@@ -139,7 +139,7 @@ func rebuild() -> void:
 	ent.text = "🏥 Больница «Карачун»"
 	ent.font_size = 48; ent.pixel_size = 0.008; ent.billboard = BaseMaterial3D.BILLBOARD_ENABLED; ent.outline_size = 12
 	ent.modulate = Color(1, 0.95, 0.7)
-	ent.position = Vector3(S.ent.x + 0.5, 2.4, H + 0.8)
+	ent.position = Vector3(S.ent.x + 0.5, 1.0, H + 3.6)   # on the lawn, away from the walking crowd
 	ent.font = UIKit.font_800
 	dyn_root.add_child(ent)
 	labels["ent"] = ent
@@ -306,7 +306,7 @@ func _sync_chars(gdt: float) -> void:
 
 # visual-only personal space: standing/walking bodies closer than MIN_SEP are eased apart (sim positions untouched),
 # so two people never render inside each other at doors / queues
-const MIN_SEP := 0.62
+const MIN_SEP := 0.7
 func _separate(gdt: float) -> void:
 	_separate_pass(gdt, 0)
 
@@ -343,7 +343,7 @@ func _separate_pass(gdt: float, pass_i: int) -> void:
 			p.position += p.sep_off
 			continue
 		var tgt: Vector3 = push.get(p, Vector3.ZERO)
-		if tgt.length() > 0.45: tgt = tgt.normalized() * 0.45
+		if tgt.length() > 0.55: tgt = tgt.normalized() * 0.55
 		tgt = _free_push(p.position, tgt)
 		p.sep_off = p.sep_off.lerp(tgt, minf(1.0, 0.3 + gdt * 8.0))
 		p.position += p.sep_off
@@ -464,7 +464,7 @@ func _anim_rooms(gdt: float) -> void:
 				var base: Transform3D = mi.get_meta("base_xf")
 				match name:
 					"slide":
-						mi.global_transform = Transform3D(base.basis, base.origin - base.basis.z.normalized() * 0.75 * kk)
+						mi.global_transform = Transform3D(base.basis, base.origin - base.basis.z.normalized() * CharPuppet.SLIDE * kk)
 					"glow", "uv", "xglow":
 						var m = _own_mat(mi)
 						if m:

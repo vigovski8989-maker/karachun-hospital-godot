@@ -71,6 +71,7 @@ func _ready() -> void:
 	cam.hud = hud
 	set_gfx(gfx, false)
 	_parse_args()
+	_apply_sh_dbg()
 	# start: continue last level if saved, else level 1, then show level select (as 45.x)
 	var last = _last_lv()
 	sim.newGame(0)
@@ -103,15 +104,17 @@ func _ready() -> void:
 			for p in sim.S.pats:
 				if n < (6 if dbg_big > 0 else 3) and p.state in ["queue", "seek"] and not p.get("vs"):
 					sim.unqueue(p); p.need = dbg_demo; p.known = true; p.cert = 1.0; p.state = "seek"; n += 1
-			dbg_watch = dbg_demo
+			var keep_w = dbg_watch.begins_with("seat:")
+			if not keep_w: dbg_watch = dbg_demo
 			if dbg_demo == "staffroom":
 				for s0 in sim.S.staff: s0.fat = 96.0
-				dbg_watch = "s_" + dbg_staff
+				if not keep_w: dbg_watch = "s_" + dbg_staff
 			print("DEMO ", dbg_demo, " rooms ", sim.rooms_of(dbg_demo).size(), " routed ", n)
 		if dbg_zoom > 0: cam.zoom = dbg_zoom
 		if dbg_focus != "":
 			var f = dbg_focus.split(",")
-			cam.focus = Vector3(float(f[0]), 0, float(f[1]))
+			if dbg_focus == "ent": cam.focus = Vector3(sim.S.ent.x + .5, 0, sim.S.h - 2.0)
+			else: cam.focus = Vector3(float(f[0]), 0, float(f[1]))
 		cam.apply()
 		_dbg_ui()
 	elif not auto_play:
@@ -135,6 +138,16 @@ func _parse_args() -> void:
 			if w.size() > 1: dbg_watch_q = float(w[1])
 		elif a.begins_with("--lv="): start_lv = int(a.substr(5))
 		elif a.begins_with("--days="): ff_days = int(a.substr(7))
+		elif a.begins_with("--campitch="):
+			var pd = deg_to_rad(float(a.substr(11)))
+			var hd = Vector3(cam.dir.x, 0, cam.dir.z).normalized()
+			cam.dir = (hd * cos(pd) + Vector3.UP * sin(pd)).normalized()
+		elif a.begins_with("--burst="):
+			var bw = a.substr(8).split(",")
+			dbg_burst_n = int(bw[0]); dbg_burst_step = int(bw[1]) if bw.size() > 1 else 20
+		elif a.begins_with("--sh="):
+			var w2 = a.substr(5).split(",")
+			dbg_sh = Array(w2)
 		elif a.begins_with("--staff="): dbg_staff = a.substr(8)
 		elif a.begins_with("--big="): dbg_big = int(a.substr(6))
 		elif a.begins_with("--speed="): dbg_speed = int(a.substr(8))
@@ -145,6 +158,17 @@ func _parse_args() -> void:
 			add_child(au); dbg_audit = au
 		elif a.begins_with("--trace=") and dbg_audit: dbg_audit.trace_room = a.substr(8)
 		elif a.begins_with("--ashot=") and dbg_audit: dbg_audit.shot_dir = a.substr(8)
+
+var dbg_sh: Array = []
+var dbg_burst_n = 0
+var dbg_burst_step = 20
+var burst_i = -1
+var burst_wait = 0
+func _apply_sh_dbg() -> void:
+	if dbg_sh.size() >= 5:
+		sun.directional_shadow_max_distance = float(dbg_sh[0]); sun.shadow_bias = float(dbg_sh[1])
+		sun.shadow_normal_bias = float(dbg_sh[2]); sun.shadow_blur = float(dbg_sh[3])
+		RenderingServer.directional_shadow_atlas_set_size(int(dbg_sh[4]), true)
 
 func _env() -> void:
 	env = WorldEnvironment.new()
@@ -172,10 +196,11 @@ func _env() -> void:
 	sun.light_color = Color(1.0, 0.97, 0.9)
 	sun.shadow_enabled = true
 	sun.directional_shadow_mode = DirectionalLight3D.SHADOW_ORTHOGONAL
-	sun.directional_shadow_max_distance = 40.0
-	sun.shadow_blur = 1.5
-	sun.shadow_bias = 0.06
-	sun.shadow_normal_bias = 1.6
+	sun.directional_shadow_max_distance = 90.0
+	sun.shadow_blur = 1.0
+	sun.shadow_bias = 0.03
+	sun.shadow_normal_bias = 0.8
+	RenderingServer.directional_shadow_atlas_set_size(4096, true)
 	add_child(sun)
 
 func set_gfx(q: String, persist := true) -> void:
@@ -189,13 +214,13 @@ func set_gfx(q: String, persist := true) -> void:
 			env.environment.glow_enabled = false
 		"medium":
 			sun.shadow_enabled = true
-			sun.directional_shadow_max_distance = 30.0
+			sun.directional_shadow_max_distance = 80.0
 			vp.scaling_3d_scale = 0.85
 			vp.msaa_3d = Viewport.MSAA_2X
 			env.environment.glow_enabled = true
 		_:
 			sun.shadow_enabled = true
-			sun.directional_shadow_max_distance = 45.0
+			sun.directional_shadow_max_distance = 90.0
 			vp.scaling_3d_scale = 1.0
 			vp.msaa_3d = Viewport.MSAA_4X
 			env.environment.glow_enabled = true
@@ -241,13 +266,34 @@ func _process(delta: float) -> void:
 			cam.focus = Vector3(hit.x + .5, 0, hit.y + .5)
 			cam.apply()
 		dbg_watch_n += 1
-		if shot_frames == 1 and not dbg_watch.begins_with("s_") and dbg_watch_n < 20000 and (hit == null or CharPuppet.procQ(hit) < dbg_watch_q):
+		if dbg_watch.begins_with("seat:"):
+			# debug: follow someone seated on a given seat kind (sofa / chair / bench ...)
+			var ok = false
+			if dbg_watch_n % 120 == 0:
+				for q in sim.S.staff + sim.S.pats:
+					if q.get("vs"): print("SEATW ", q.id, " ", q.vs.pose, " ", q.vs.ph, " ", q.vs.t, " ", q.vs.get("sp"))
+			for q in sim.S.staff + sim.S.pats:
+				var qv = q.get("vs")
+				if qv and qv.ph == "sat" and qv.pose == "sit" and qv.get("sp") and str(qv.sp.get("seat")) == dbg_watch.substr(5) and float(qv.t) > 1.2:
+					cam.focus = Vector3(q.x + .5, 0, q.y + .5); cam.apply(); ok = true; break
+			if shot_frames == 1 and not ok and dbg_watch_n < 20000: shot_frames = 2
+		elif shot_frames == 1 and not dbg_watch.begins_with("s_") and dbg_watch_n < 20000 and (hit == null or CharPuppet.procQ(hit) < dbg_watch_q):
 			shot_frames = 2
 	if shot_frames >= 0:
 		shot_frames -= 1
 		if shot_frames == 0 and shot_path != "":
-			get_viewport().get_texture().get_image().save_png(shot_path)
-			get_tree().quit()
+			if dbg_burst_n > 0:
+				burst_i = 0; burst_wait = 0
+				shot_frames = -1
+			else:
+				get_viewport().get_texture().get_image().save_png(shot_path)
+				get_tree().quit()
+	if burst_i >= 0:
+		burst_wait -= 1
+		if burst_wait <= 0:
+			get_viewport().get_texture().get_image().save_png(shot_path.replace(".png", "_%02d.png" % burst_i))
+			burst_i += 1; burst_wait = dbg_burst_step
+			if burst_i >= dbg_burst_n: get_tree().quit()
 
 func _events() -> void:
 	var ev: Array = sim.events

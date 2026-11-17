@@ -6,6 +6,7 @@ var rot = 0.0
 var mode = "seats"
 var zoom = 4.0
 var frames = 0
+var no_tweak = false
 var pups = []
 var cam: Camera3D
 func _initialize():
@@ -14,6 +15,7 @@ func _initialize():
 		elif a.begins_with("--rot="): rot = float(a.substr(6))
 		elif a.begins_with("--mode="): mode = a.substr(7)
 		elif a.begins_with("--zoom="): zoom = float(a.substr(7))
+		elif a == "--notweak": no_tweak = true
 	var w = Node3D.new(); root.add_child(w)
 	var env = WorldEnvironment.new(); var e = Environment.new()
 	e.background_mode = Environment.BG_COLOR; e.background_color = Color(0.8, 0.82, 0.85)
@@ -52,7 +54,7 @@ func _initialize():
 			var f = Vector3(0, 0, 1)
 			p.position = Vector3(x, 0, z) + f * float(CharPuppet.SIT_F.get(sk, .2))
 			p.set_meta("seat_h", float(CharPuppet.SEAT_H.get(sk, .5)))
-			p.set_meta("anim", "Sitting_Talking" if i % 2 == 0 else "Sitting_Idle")
+			p.set_meta("anim", "Sitting_Idle")
 			pups.append(p)
 	else:
 		var ms = ["patient_a", "nurse", "doctor", "patient_a"]
@@ -72,6 +74,8 @@ func _tick():
 	for p in pups:
 		p.play(p.get_meta("anim"))
 		p.ap.advance(0.05)
+		p._seat_w = 1.0 if p.get_meta("seat_h") > 0 else 0.0
+		if p._seat_w > 0.5 and p.cur == "Sitting_Idle" and not no_tweak: p._sit_tweak(1.0)
 		var sh: float = p.get_meta("seat_h")
 		if sh > 0 and p.thigh_l >= 0:
 			var ty = (p.skel.get_bone_global_pose(p.thigh_l).origin.y + p.skel.get_bone_global_pose(p.thigh_r).origin.y) * 0.5

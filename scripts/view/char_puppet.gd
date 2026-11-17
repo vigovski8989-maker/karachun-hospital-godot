@@ -295,6 +295,7 @@ func attach_prop(name: String, node: Node3D, bone := "Head", offset := Vector3.Z
 	props[name] = ba
 
 # ---------- pose layer (port of r3d.js poseOf + procFx/v43Give/mach46/hose semantics) ----------
+const SLIDE := 0.5
 const MATT_H := {"bed": 0.61, "scanner": 0.64, "autopsy": 0.9, "elchair": 0.5}
 var lie_k = 0.0
 var head_scale = 1.0
@@ -519,7 +520,7 @@ func _smooth(sim, pts: Array) -> Array:
 	return o
 
 # lab: stand at the patient's right side (arm side), planned from the room's patient spot
-func _vw_go_patient(sim, home: Vector3, r, pv = null) -> void:
+func _vw_go_patient(sim, home: Vector3, r, pv = null, view = null) -> void:
 	vw_goal = "pat"; vw_arrived = false; vw_arr_t = 0.0
 	vw_planned_pv = pv != null
 	var sp = sim.spotPatient(r)
@@ -532,8 +533,36 @@ func _vw_go_patient(sim, home: Vector3, r, pv = null) -> void:
 	var f = Vector3(sin(py), 0, cos(py))
 	var right = Vector3(-cos(py), 0, sin(py))       # character's right = local -X
 	var best = []
-	for sgn in [1.0, -1.0]:
-		var goal = P + right * (0.58 * sgn) + f * 0.12
+	if pv != null:
+		# 0.9.5: stand next to the patient's draw hand (wherever the arm rests), on a free tile, not inside the patient
+		var hw: Vector3 = pv.hand_world("hand_r")
+		var room0 = sim.roomAt(int(floor(home.x)), int(floor(home.z)))
+		var cands = []
+		for i in 8:
+			var an = TAU * i / 8.0
+			var c = Vector3(hw.x + cos(an) * 0.6, 0, hw.z + sin(an) * 0.6)
+			var cx = int(floor(c.x)); var cz = int(floor(c.z))
+			if not sim.walk(cx, cz) or sim.roomAt(cx, cz) != room0: continue
+			var itc = view.item_at_tile(cx, cz) if view else null
+			if itc != null and not itc.get("soft"): continue
+			if Vector2(c.x - P.x, c.z - P.z).length() < 0.5: continue
+			# keep clear of the walls / furniture neighbours so the body does not clip: tile centre pull
+			cands.append([home.distance_to(c), c])
+		cands.sort_custom(func(a, b): return a[0] < b[0])
+		for cd in cands:
+			var c2: Vector3 = cd[1]
+			var gx2 = int(floor(c2.x)); var gz2 = int(floor(c2.z))
+			var pts2 = _tile_pts(sim, home, gx2, gz2)
+			if pts2.is_empty() and (gx2 != int(floor(home.x)) or gz2 != int(floor(home.z))): continue
+			pts2.push_front(home); pts2.append(c2)
+			pts2 = _smooth(sim, pts2); pts2.pop_front()
+			best = pts2
+			break
+	# the patient's draw arm is the right one: the nurse works from that side
+	var sides = [1.0, -1.0]
+	for sgn in sides:
+		if not best.is_empty(): break
+		var goal = P + right * (0.56 * sgn) + f * 0.12
 		var gx = int(floor(goal.x)); var gz = int(floor(goal.z))
 		if not sim.walk(gx, gz) or sim.roomAt(gx, gz) != sim.roomAt(int(floor(home.x)), int(floor(home.z))): continue
 		var pts = _tile_pts(sim, home, gx, gz)
@@ -550,6 +579,32 @@ func _vw_go_patient(sim, home: Vector3, r, pv = null) -> void:
 	vw_pts = best
 	if vw_pos == null: vw_pos = home; vw_home = home
 	vw_home_pts = best.duplicate(); vw_home_pts.reverse(); vw_home_pts.append(vw_home)
+
+var vw_face = Vector3.INF
+# 0.9.5: scanner operator stands beside the gantry panel (view-only walk from the staff spot)
+func _vw_go_scanner(sim, view, home: Vector3, r) -> bool:
+	var m = view.machine_of(r.id, ["scanner"]) if view else null
+	if m == null: return false
+	var piv: Node3D = m.piv
+	var T: Transform3D = piv.global_transform
+	var room_rect = sim.roomAt(int(floor(home.x)), int(floor(home.z)))
+	for sgn in [1.0, -1.0]:
+		var g: Vector3 = T * Vector3(.95 * sgn, 0, -.3)
+		var gx = int(floor(g.x)); var gz = int(floor(g.z))
+		if not sim.walk(gx, gz) or sim.roomAt(gx, gz) != room_rect: continue
+		var it = view.item_at_tile(gx, gz)
+		if it != null and not it.get("soft"): continue
+		var pts = _tile_pts(sim, home, gx, gz)
+		if pts.is_empty() and (gx != int(floor(home.x)) or gz != int(floor(home.z))): continue
+		pts.push_front(home); pts.append(Vector3(g.x, 0, g.z))
+		pts = _smooth(sim, pts); pts.pop_front()
+		vw_goal = "pat"; vw_arrived = false; vw_arr_t = 0.0; vw_planned_pv = true
+		vw_pts = pts
+		vw_face = T * Vector3(0, 0, -.1)
+		if vw_pos == null: vw_pos = home; vw_home = home
+		vw_home_pts = pts.duplicate(); vw_home_pts.reverse(); vw_home_pts.append(vw_home)
+		return true
+	return false
 
 func _vw_go_home(_sim, home: Vector3) -> void:
 	vw_goal = "home"; vw_arrived = false
@@ -593,7 +648,7 @@ func _place_lying() -> void:
 	var pl: Vector3 = chain * skel.get_bone_global_pose(hip_idx).origin
 	var R = Basis(Vector3(1, 0, 0), -lie_k * PI / 2.0).scaled(model.scale)
 	var d_sit = Basis.from_scale(model.scale) * pl + Vector3(0, _gy, 0)
-	var d_lie = Vector3(0, _lie_h + 0.1, 0)
+	var d_lie = Vector3(0, _lie_h + 0.085, 0)
 	model.position = d_sit.lerp(d_lie, lie_k) - R * pl
 var death_hold = false
 var slide = 0.0
@@ -676,7 +731,7 @@ func sync(sim, e: Dictionary, gdt: float, view) -> void:
 						if sat0 < 0: sat0 = 0.0
 						sat0 += gdt
 						var kk = ease01(sat0 / 0.9) * ease01((float(e.t) - SEAT_T.lie) / 0.9)
-						tgt -= fwd * 0.75 * kk
+						tgt -= fwd * SLIDE * kk
 						view.set_room_k(e.get("room"), kk, true)
 					else:
 						sat0 = -1.0
@@ -694,7 +749,7 @@ func sync(sim, e: Dictionary, gdt: float, view) -> void:
 					if sat0 < 0: sat0 = 0.0
 					sat0 += gdt
 					var kk = ease01(sat0 / 0.9) * ease01((float(e.t) - SEAT_T.lie) / 0.9)
-					tgt -= fwd * 0.75 * kk
+					tgt -= fwd * SLIDE * kk
 					view.set_room_k(e.get("room"), kk, true)
 				else: sat0 = -1.0
 				# 45.x: straight lie-back onto the table from standing (never "sitting on air" beside it)
@@ -791,12 +846,20 @@ func sync(sim, e: Dictionary, gdt: float, view) -> void:
 					# explain -> operate the console/machine -> report back
 					anim = "Interact" if qq > .18 and qq < .82 else "Idle_Talking"
 					spd = 0.7
+					if r.type == "diag" and view:
+						# 0.9.5: the operator walks over to the gantry panel while the patient is being scanned
+						if qq < .86:
+							if vw_goal != "pat": _vw_go_scanner(sim, view, vw_pos if vw_pos != null else tgt, r)
+							if vw_goal == "pat" and vw_arrived and vw_face != Vector3.INF:
+								var df = vw_face - (vw_pos if vw_pos != null else tgt)
+								yaw = lerp_angle(rotation.y, atan2(df.x, df.z), minf(1.0, gdt * 6.0 + 0.05))
+						elif vw_goal == "pat": _vw_go_home(sim, tgt)
 				"lab":
 					# 0.9.4: the nurse walks round the counter to the patient's right side, draws blood there, walks back
 					anim = "Idle_Talking"
 					spd = 0.6
 					if pv and qq < .84:
-						if vw_goal != "pat" or (not vw_planned_pv and vw_arrived): _vw_go_patient(sim, vw_pos if vw_pos != null else tgt, r, pv)
+						if vw_goal != "pat" or (not vw_planned_pv and vw_arrived): _vw_go_patient(sim, vw_pos if vw_pos != null else tgt, r, pv, view)
 						if vw_goal == "pat" and vw_arrived:
 							vw_arr_t += gdt
 							var hw = pv.hand_world("hand_r")
@@ -943,6 +1006,7 @@ func sync(sim, e: Dictionary, gdt: float, view) -> void:
 		ap.advance(acc)
 		acc = 0.0
 		if lie_k > 0.001: _straighten_legs(lie_k)
+		elif _seat_w > 0.6 and cur == "Sitting_Idle" and reach_w < 0.01: _sit_tweak(ease01((_seat_w - 0.6) / 0.4))
 		if reach_w > 0.01:
 			var tw = reach_world if reach_world != Vector3.INF else (global_transform * reach_r if reach_r != Vector3.INF else Vector3.INF)
 			if tw != Vector3.INF: _reach("upperarm_r", "hand_r", tw, reach_w)
@@ -1014,6 +1078,60 @@ func _reach(upper: String, hand: String, target: Vector3, w: float) -> void:
 	var T = skel.global_transform.affine_inverse() * target
 	_aim(ui, li, T, w)
 	_aim(li, hi, T, w)
+
+# two-bone arm IK: hand bone origin to target T (skeleton space), elbow bends towards `pole` (skeleton-space direction)
+func _ik2(upper: String, hand: String, T: Vector3, w: float, pole: Vector3) -> void:
+	var ui = skel.find_bone(upper)
+	var li = skel.find_bone(upper.replace("upperarm", "lowerarm"))
+	var hi = skel.find_bone(hand)
+	if ui < 0 or li < 0 or hi < 0: return
+	var S: Vector3 = skel.get_bone_global_pose(ui).origin
+	var E: Vector3 = skel.get_bone_global_pose(li).origin
+	var W: Vector3 = skel.get_bone_global_pose(hi).origin
+	var L1 = S.distance_to(E); var L2 = E.distance_to(W)
+	var dv = T - S
+	var d = clampf(dv.length(), absf(L1 - L2) + 0.02, L1 + L2 - 0.01)
+	if dv.length() < 1e-4: return
+	var a = dv.normalized()
+	var a1 = (L1 * L1 - L2 * L2 + d * d) / (2.0 * d)
+	var h = sqrt(maxf(L1 * L1 - a1 * a1, 0.0))
+	var pp = pole - a * pole.dot(a)
+	if pp.length() < 1e-4: return
+	var Ep = S + a * a1 + pp.normalized() * h
+	var Tt = S + a * d
+	_aim(ui, li, Ep, w)
+	# the forearm bone now starts at the (moved) elbow: aim at the target
+	_aim(li, hi, Tt, w)
+
+# seated, relaxed: hands rest on the thighs, knees closer together (Sitting_Idle hovers the hands and splays the legs)
+func _sit_tweak(w: float) -> void:
+	if skel == null: return
+	var ti_l = skel.find_bone("thigh_l"); var ti_r = skel.find_bone("thigh_r")
+	var ca_l = skel.find_bone("calf_l"); var ca_r = skel.find_bone("calf_r")
+	var fo_l = skel.find_bone("foot_l"); var fo_r = skel.find_bone("foot_r")
+	if ti_l < 0 or ti_r < 0 or ca_l < 0 or ca_r < 0 or fo_l < 0 or fo_r < 0: return
+	var hl = skel.get_bone_global_pose(ti_l).origin; var hr = skel.get_bone_global_pose(ti_r).origin
+	var lat = (hl - hr); if lat.length() < 1e-4: return
+	var hip_w = lat.length(); lat = lat.normalized()
+	var C = (hl + hr) * 0.5
+	for pair in [[ti_l, ca_l, fo_l, 1.0], [ti_r, ca_r, fo_r, -1.0]]:
+		var K: Vector3 = skel.get_bone_global_pose(pair[1]).origin
+		var F: Vector3 = skel.get_bone_global_pose(pair[2]).origin
+		var off = (K - C).dot(lat) * pair[3]
+		var want = hip_w * 0.5 * 1.1
+		if off <= want: continue
+		var dk = lat * (off - want) * pair[3]
+		_aim(pair[0], pair[1], K - dk * w, 1.0)
+		var K2: Vector3 = skel.get_bone_global_pose(pair[1]).origin
+		_aim(pair[1], pair[2], F + (K2 - K), 1.0)
+	# hands on the thighs
+	var up = Vector3.UP
+	var back_x = skel.global_transform.basis.inverse() * (global_transform.basis * Vector3(0, 0, -1))
+	for side in [[ "upperarm_l", "hand_l", ca_l, 1.0], ["upperarm_r", "hand_r", ca_r, -1.0]]:
+		var Kn: Vector3 = skel.get_bone_global_pose(side[2]).origin
+		var Hp: Vector3 = skel.get_bone_global_pose(side[2] if false else (ti_l if side[3] > 0 else ti_r)).origin
+		var tgt = Hp.lerp(Kn, 0.62) + (skel.global_transform.basis.inverse() * Vector3(0, 0.1, 0))
+		_ik2(side[0], side[1], tgt, w, lat * side[3] + back_x * 0.6 + (skel.global_transform.basis.inverse() * Vector3(0, -0.4, 0)))
 
 func _aim(bi: int, ci: int, T: Vector3, w: float) -> void:
 	var g: Transform3D = skel.get_bone_global_pose(bi)

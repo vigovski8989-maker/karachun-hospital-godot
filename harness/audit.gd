@@ -68,7 +68,17 @@ func _process(_d: float) -> void:
 	if frames_left <= 0:
 		_report(); get_tree().quit()
 
+var _dumped = {}
+func _dump_rooms() -> void:
+	for r in game.sim.S.rooms:
+		if _dumped.has(r.id): continue
+		_dumped[r.id] = true
+		var its = []
+		for it in r.get("it", []): its.append("%s@%s,%s fp=%s rot=%s" % [it.get("k"), it.x, it.y, it.get("fp"), it.get("rot", it.get("r"))])
+		print("ROOMDUMP ", r.type, " par=", r.get("par"), " id=", r.id, " rect=", [r.x, r.y, r.w, r.h], " sp=", r.get("sp"), "\n   items=", its)
+
 func _scan() -> void:
+	if frame < 400: _dump_rooms()
 	var sim = game.sim
 	var view = game.view
 	var arr = []
@@ -189,3 +199,4 @@ func _report() -> void:
 	for k in sk:
 		var s = stats[k]
 		print("ASTAT %s n=%d mean=%.3f min=%.3f max=%.3f" % [k, s[0], s[1] / maxf(1, s[0]), s[2], s[3]])
+
