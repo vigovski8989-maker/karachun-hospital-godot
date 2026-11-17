@@ -10,7 +10,7 @@ func _init(s: Sim) -> void: sim = s
 func RES() -> int: return 4000 + sim.S.staff.size() * 120
 func count(t: String) -> int: return sim.rooms_of(t).filter(func(r): return not r.get("par")).size()
 
-func tryBuild(t: String, big := false, reserve := -1) -> bool:
+func tryBuild(t: String, big := false, reserve := -1, bign := 1) -> bool:
 	var S = sim.S
 	if sim.roomLocked(t): return false
 	var d = sim.drm(t)
@@ -19,7 +19,7 @@ func tryBuild(t: String, big := false, reserve := -1) -> bool:
 	var h: int = d.min[1] + 2
 	if big:
 		var g0 = {"type": t, "w": w, "h": h, "side": 0}
-		sim.v24Pre(g0, 1)
+		sim.v24Pre(g0, bign)
 		w = g0.w; h = g0.h
 	var cost = sim.roomBuildCost({"type": t, "w": w, "h": h, "side": 0})
 	if S.money < cost + (RES() if reserve < 0 else reserve): return false

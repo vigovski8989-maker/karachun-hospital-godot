@@ -74,12 +74,25 @@ func sync(gdt: float) -> void:
 	if ns != sig:
 		sig = ns
 		rebuild()
+		_tiles = {}
 	_sync_doors(gdt)
 	_sync_litter()
 	_sync_chars(gdt)
 	_anim_rooms(gdt)
 	_tick_emotes(gdt)
 	_sync_labels()
+
+# tile -> room furniture item (for view-side "don't walk through furniture" and seat approach)
+var _tiles = {}
+var _tiles_n = -1
+func item_at_tile(x: int, y: int):
+	if _tiles.is_empty() or _tiles_n != sim.S.rooms.size():
+		_tiles = {"_": true}; _tiles_n = sim.S.rooms.size()
+		for r in sim.S.rooms:
+			for t in r.get("it", []):
+				var fp = t.get("fp") if t.get("fp") else sim.fpOf(t.k)
+				for tt in sim.tilesOf(t.x, t.y, fp): _tiles[tt[1] * 10000 + tt[0]] = t
+	return _tiles.get(y * 10000 + x)
 
 func rebuild() -> void:
 	for c in static_root.get_children(): c.queue_free()
@@ -293,8 +306,11 @@ func _sync_chars(gdt: float) -> void:
 
 # visual-only personal space: standing/walking bodies closer than MIN_SEP are eased apart (sim positions untouched),
 # so two people never render inside each other at doors / queues
-const MIN_SEP := 0.58
+const MIN_SEP := 0.62
 func _separate(gdt: float) -> void:
+	_separate_pass(gdt, 0)
+
+func _separate_pass(gdt: float, pass_i: int) -> void:
 	var arr = []
 	for id in puppets:
 		var p: CharPuppet = puppets[id]
@@ -302,6 +318,7 @@ func _separate(gdt: float) -> void:
 	var push = {}
 	for i in arr.size():
 		var a: CharPuppet = arr[i]
+		var fa = a.is_fixed()
 		for j in range(i + 1, arr.size()):
 			var b: CharPuppet = arr[j]
 			var dx = b.position.x - a.position.x
@@ -309,21 +326,44 @@ func _separate(gdt: float) -> void:
 			if absf(dx) > MIN_SEP or absf(dz) > MIN_SEP: continue
 			var d = sqrt(dx * dx + dz * dz)
 			if d >= MIN_SEP: continue
-			var n = Vector3(dx, 0, dz) / d if d > 0.001 else Vector3(1, 0, 0).rotated(Vector3.UP, float(i * 7 + j))
-			if a.seated and b.seated: continue
+			var fb = b.is_fixed()
+			if fa and fb: continue
+			var n = Vector3(dx, 0, dz) / d if d > 0.001 else Vector3(1, 0, 0).rotated(Vector3.UP, float(a.eid * 7 + b.eid))
 			var k = (MIN_SEP - d) * 0.5
-			# seated / working-at-desk bodies don't move; the standing one steps aside fully
-			var ka = 0.0 if a.seated else (k * 2.0 if b.seated else k)
-			var kb = 0.0 if b.seated else (k * 2.0 if a.seated else k)
+			var ka = 0.0 if fa else (k * 2.0 if fb else k)
+			var kb = 0.0 if fb else (k * 2.0 if fa else k)
 			push[a] = push.get(a, Vector3.ZERO) - n * ka
 			push[b] = push.get(b, Vector3.ZERO) + n * kb
 	for p in arr:
-		if p.seated: continue
+		if pass_i == 1:
+			if not p.is_fixed(): p.position += _free_push(p.position, push.get(p, Vector3.ZERO).limit_length(0.3)) * 0.6
+			continue
+		if p.is_fixed():
+			p.sep_off = p.sep_off.lerp(Vector3.ZERO, minf(1.0, gdt * 10.0 + 0.1))
+			p.position += p.sep_off
+			continue
 		var tgt: Vector3 = push.get(p, Vector3.ZERO)
-		p.sep_off = p.sep_off.lerp(tgt, minf(1.0, 0.25 + gdt * 6.0))
+		if tgt.length() > 0.45: tgt = tgt.normalized() * 0.45
+		tgt = _free_push(p.position, tgt)
+		p.sep_off = p.sep_off.lerp(tgt, minf(1.0, 0.3 + gdt * 8.0))
 		p.position += p.sep_off
+	if pass_i == 0: _separate_pass(gdt, 1)
+
+# never push a body through a wall or into solid furniture
+func _free_push(pos: Vector3, off: Vector3) -> Vector3:
+	if off.length() < 0.001: return off
+	var r0 = sim.roomAt(int(floor(pos.x)), int(floor(pos.z)))
+	for o in [off, Vector3(off.x, 0, 0), Vector3(0, 0, off.z), off * 0.5]:
+		var q = pos + o
+		var tx = int(floor(q.x)); var tz = int(floor(q.z))
+		if tx == int(floor(pos.x)) and tz == int(floor(pos.z)): return o
+		if sim.walk(tx, tz) and sim.roomAt(tx, tz) == r0:
+			var it = item_at_tile(tx, tz)
+			if it == null or it.get("soft"): return o
+	return Vector3.ZERO
 
 var _tall = 1.0
+var audit_all = false   # debug audit: every puppet visible + full-rate animation
 var _lab_zoom = -1.0
 func _scale_labels(zoom: float) -> void:
 	# room names keep a readable, constant on-screen size (portrait: zoom = visible width in metres)
@@ -348,9 +388,9 @@ func _sync_one(e: Dictionary, staff: bool, gdt: float, seen: Dictionary, focus: 
 		p = _make_puppet(e, staff)
 		puppets[id] = p
 	var d = Vector2(float(e.x) - focus.x, float(e.y) - focus.z).length()
-	var vis = d < zoom * 1.6 * _tall
+	var vis = d < zoom * 1.6 * _tall or audit_all
 	p.visible = vis
-	p.lod_every = 1 if d < zoom * 0.7 else (2 if vis else 8)
+	p.lod_every = 1 if (d < zoom * 0.7 or audit_all) else (2 if vis else 8)
 	p.sync(sim, e, gdt, self)
 
 func _sync_labels() -> void:

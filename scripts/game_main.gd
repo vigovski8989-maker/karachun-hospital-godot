@@ -40,6 +40,10 @@ var dbg_watch_n = 0
 var ff_days = 0
 var shot_path = ""
 var shot_frames = -1
+var dbg_speed = 0
+var dbg_big = 0
+var dbg_staff = "doctor"
+var dbg_audit = null
 
 func _ready() -> void:
 	_load_settings()
@@ -85,17 +89,24 @@ func _ready() -> void:
 				fr += 1
 				if ap and fr % 30 == 0: ap.tick()
 			sim.events = []
-		if auto_play: set_speed(1)
+		if auto_play: set_speed(dbg_speed if dbg_speed > 0 else 1)
 		if dbg_demo != "" and ap:
 			# debug-only screenshot scenario: make sure a <type> room exists and route a few patients to it
 			sim.S.money += 60000
+			if dbg_big > 0:
+				for r0 in sim.rooms_of(dbg_demo).duplicate(): sim.sellRoom(r0.id)
+				sim.S.money += 60000
+				print("BIG ", ap.tryBuild(dbg_demo, true, 0, dbg_big), " slots ", sim.rooms_of(dbg_demo).size())
 			if sim.rooms_of(dbg_demo).is_empty(): ap.tryBuild(dbg_demo)
 			ap.hireNeeds()
 			var n = 0
 			for p in sim.S.pats:
-				if n < 3 and p.state in ["queue", "seek"] and not p.get("vs"):
+				if n < (6 if dbg_big > 0 else 3) and p.state in ["queue", "seek"] and not p.get("vs"):
 					sim.unqueue(p); p.need = dbg_demo; p.known = true; p.cert = 1.0; p.state = "seek"; n += 1
 			dbg_watch = dbg_demo
+			if dbg_demo == "staffroom":
+				for s0 in sim.S.staff: s0.fat = 96.0
+				dbg_watch = "s_" + dbg_staff
 			print("DEMO ", dbg_demo, " rooms ", sim.rooms_of(dbg_demo).size(), " routed ", n)
 		if dbg_zoom > 0: cam.zoom = dbg_zoom
 		if dbg_focus != "":
@@ -124,6 +135,16 @@ func _parse_args() -> void:
 			if w.size() > 1: dbg_watch_q = float(w[1])
 		elif a.begins_with("--lv="): start_lv = int(a.substr(5))
 		elif a.begins_with("--days="): ff_days = int(a.substr(7))
+		elif a.begins_with("--staff="): dbg_staff = a.substr(8)
+		elif a.begins_with("--big="): dbg_big = int(a.substr(6))
+		elif a.begins_with("--speed="): dbg_speed = int(a.substr(8))
+		elif a.begins_with("--audit="):
+			var au = load("res://harness/audit.gd").new()
+			au.game = self; au.frames_left = int(a.substr(8))
+			view.audit_all = true
+			add_child(au); dbg_audit = au
+		elif a.begins_with("--trace=") and dbg_audit: dbg_audit.trace_room = a.substr(8)
+		elif a.begins_with("--ashot=") and dbg_audit: dbg_audit.shot_dir = a.substr(8)
 
 func _env() -> void:
 	env = WorldEnvironment.new()

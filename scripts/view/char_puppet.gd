@@ -341,6 +341,41 @@ var thigh_r = -1
 var lab_sit = false
 static var _bed_sides = {}
 
+# a body standing on a solid item tile (sofa / desk after getting up, or a path that ends on the item): move to the
+# closest free floor tile in the same room (prefer where we came from)
+func _nearest_free(sim, view, pos: Vector3, prefer) -> Vector3:
+	var r0 = sim.roomAt(int(floor(pos.x)), int(floor(pos.z)))
+	var best = pos
+	var bd = 1e9
+	var cx = int(floor(pos.x)); var cz = int(floor(pos.z))
+	for dz in range(-2, 3):
+		for dx in range(-2, 3):
+			var x = cx + dx; var z = cz + dz
+			if not sim.walk(x, z): continue
+			var it = view.item_at_tile(x, z)
+			if it != null and not it.get("soft") and str(it.k) != "plant": continue
+			var c = Vector3(x + .5, 0, z + .5)
+			# closest point of the tile to pos (stay near the item edge, not tile centre)
+			var q = Vector3(clampf(pos.x, x + .3, x + .7), 0, clampf(pos.z, z + .3, z + .7))
+			var d = q.distance_to(pos) + (0.0 if sim.roomAt(x, z) == r0 else 1.5)
+			if prefer != null: d += 0.35 * q.distance_to(prefer)
+			if d < bd: bd = d; best = q
+	return best
+var _vs_side = Vector3.ZERO
+var _vs_side_ref = null
+
+# chairs pulled up to a desk/counter: the tile in front is solid, so get in from the side (free floor, same room)
+func _side_approach(sim, view, A: Vector3, f: Vector3) -> Vector3:
+	var fx = int(floor(A.x + f.x * .9)); var fz = int(floor(A.z + f.z * .9))
+	var it = view.item_at_tile(fx, fz) if view else null
+	if sim.walk(fx, fz) and (it == null or it.get("soft")): return Vector3.ZERO
+	var r0 = sim.roomAt(int(floor(A.x)), int(floor(A.z)))
+	for sd in [Vector3(-f.z, 0, f.x), Vector3(f.z, 0, -f.x)]:
+		var sx = int(floor(A.x + sd.x * .9)); var sz = int(floor(A.z + sd.z * .9))
+		var it2 = view.item_at_tile(sx, sz) if view else null
+		if sim.walk(sx, sz) and sim.roomAt(sx, sz) == r0 and (it2 == null or it2.get("soft")): return sd
+	return Vector3.ZERO
+
 static func dir_yaw(d) -> float:
 	match int(d if d != null else 1):
 		0: return PI / 2
@@ -407,39 +442,159 @@ func _bed_side(sim, b) -> int:
 	return sd
 
 func _bed_pose(sim, b, sp, L: float, cur: Vector3) -> Dictionary:
+	# 0.9.4: walk to the bed side (near the middle), sit on the edge with the back to the mattress, then swing the legs in
+	# while lying back: yaw turns onto the bed's long axis, legs straighten (leg bones -> rest) in sync with the tilt.
 	var t = b.t
 	var fp = t.get("fp") if t.get("fp") else sim.fpOf(t.k)
 	var az = int(fp[1]) >= int(fp[0])
 	var sd = _bed_side(sim, b)
 	var C = Vector3(t.x + fp[0] / 2.0, 0, t.y + fp[1] / 2.0)
 	var sv = Vector3(sd, 0, 0) if az else Vector3(0, 0, sd)
-	var P0 = Vector3(float(sp.x) + .5, 0, float(sp.y) + .5)
-	var Ss = C + sv * .95
-	var E = C + sv * .4
-	var K = Vector3(Ss.x, 0, P0.z) if az else Vector3(P0.x, 0, Ss.z)
-	var yaw_out = atan2(sv.x, sv.z)
 	var Y0 = b.piv.rotation.y
-	var o = {"pos": cur, "yaw": yaw_out, "anim": "Idle", "spd": 1.0, "lie": 0.0, "w": 0.0}
-	if L < .3:
-		var a = L / .3
-		o.pos = _polyline([P0, K, Ss], a)
+	var foot = Vector3(sin(Y0), 0, cos(Y0))          # +Z of the bed = foot end (headboard / scanner ring at -Z)
+	var P0 = Vector3(float(sp.x) + .5, 0, float(sp.y) + .5)
+	var Ss = C + sv * .92 + foot * .2
+	var E = C + sv * .42 + foot * .2
+	var yaw_out = atan2(sv.x, sv.z)
+	var o = {"pos": cur, "yaw": yaw_out, "anim": "Sitting_Idle", "spd": 1.0, "lie": 0.0, "w": 0.0}
+	if L < .4:
+		var a = L / .4
+		var K = P0.lerp(Ss, .5) + sv * .25
+		o.pos = _polyline([P0, K, Ss], ease01(a))
 		var dv = o.pos - position
-		if a < .92:
-			o.anim = "Walk"; o.spd = .8
-			if Vector2(dv.x, dv.z).length() > .002: o.yaw = atan2(dv.x, dv.z)
-	elif L < .55:
-		var k = ease01((L - .3) / .25)
+		o.anim = "Walk"; o.spd = 1.1
+		if a > .9:
+			o.anim = "Idle"
+			o.yaw = lerp_angle(rotation.y, yaw_out, .35)
+		elif Vector2(dv.x, dv.z).length() > .002: o.yaw = atan2(dv.x, dv.z)
+	elif L < .6:
+		var k = ease01((L - .4) / .2)
 		o.pos = Ss.lerp(E, k); o.anim = "Sitting_Enter" if _vs_ref and _vs_ref.ph == "down" else "Sitting_Exit"
-		o.spd = 1.0; o.w = k
+		o.spd = 1.4; o.w = k
 	else:
-		var u = ease01((L - .55) / .45)
+		var u = ease01((L - .6) / .4)
 		o.pos = E.lerp(C, u)
 		o.yaw = lerp_angle(yaw_out, Y0, u)
 		o.lie = u; o.w = 1.0
-		o.anim = "Sitting_Idle" if u < .5 else "Idle"
-		o.spd = 1.0 if u < .5 else 0.06
+		o.anim = "Sitting_Idle"; o.spd = 0.5
 	return o
 var pelvis_h = 0.95
+var lie_direct = false
+var _last_free = null
+func is_fixed() -> bool:
+	return seated and (_seat_w > 0.3 or lie_k > 0.05)
+# view-only walk (lab nurse goes round the counter): sim position stays at the staff spot
+var vw_pos = null
+var vw_pts = []
+var vw_goal = ""
+var vw_planned_pv = false
+var vw_home = Vector3.ZERO
+var vw_arrived = false
+var vw_arr_t = 0.0
+var vw_home_pts = []
+
+func _tile_pts(sim, from: Vector3, gx: int, gy: int) -> Array:
+	var pth = sim.path(int(floor(from.x)), int(floor(from.z)), gx, gy)
+	if pth == null: return []
+	var o = []
+	for q in pth: o.append(Vector3(float(q.x) + .5, 0, float(q.y) + .5))
+	return o
+
+func _los(sim, a: Vector3, b: Vector3) -> bool:
+	var n = int(ceil(a.distance_to(b) / 0.2))
+	for i in range(1, n):
+		var q = a.lerp(b, float(i) / n)
+		for o in [Vector3.ZERO, Vector3(.28, 0, 0), Vector3(-.28, 0, 0), Vector3(0, 0, .28), Vector3(0, 0, -.28)]:
+			if not sim.walk(int(floor(q.x + o.x)), int(floor(q.z + o.z))): return false
+	return true
+
+func _smooth(sim, pts: Array) -> Array:
+	if pts.size() < 3: return pts
+	var o = [pts[0]]
+	var i = 0
+	while i < pts.size() - 1:
+		var j = pts.size() - 1
+		while j > i + 1 and not _los(sim, pts[i], pts[j]): j -= 1
+		o.append(pts[j]); i = j
+	return o
+
+# lab: stand at the patient's right side (arm side), planned from the room's patient spot
+func _vw_go_patient(sim, home: Vector3, r, pv = null) -> void:
+	vw_goal = "pat"; vw_arrived = false; vw_arr_t = 0.0
+	vw_planned_pv = pv != null
+	var sp = sim.spotPatient(r)
+	var py = dir_yaw(sp.get("dir"))
+	var P = Vector3(float(sp.x) + .5, 0, float(sp.y) + .5)
+	if pv != null:
+		# the patient's real place (the room can have been re-laid out while they walked in)
+		py = pv.rotation.y
+		P = Vector3(pv.position.x, 0, pv.position.z) - Vector3(sin(py), 0, cos(py)) * (float(SIT_F.stool) * pv._seat_w)
+	var f = Vector3(sin(py), 0, cos(py))
+	var right = Vector3(-cos(py), 0, sin(py))       # character's right = local -X
+	var best = []
+	for sgn in [1.0, -1.0]:
+		var goal = P + right * (0.58 * sgn) + f * 0.12
+		var gx = int(floor(goal.x)); var gz = int(floor(goal.z))
+		if not sim.walk(gx, gz) or sim.roomAt(gx, gz) != sim.roomAt(int(floor(home.x)), int(floor(home.z))): continue
+		var pts = _tile_pts(sim, home, gx, gz)
+		if pts.is_empty() and (gx != int(floor(home.x)) or gz != int(floor(home.z))): continue
+		pts.push_front(home)
+		pts.append(goal)
+		pts = _smooth(sim, pts)
+		pts.pop_front()
+		best = pts
+		break
+	if best.is_empty():
+		var d = P - home
+		best = [home + Vector3(d.x, 0, d.z).normalized() * .3]
+	vw_pts = best
+	if vw_pos == null: vw_pos = home; vw_home = home
+	vw_home_pts = best.duplicate(); vw_home_pts.reverse(); vw_home_pts.append(vw_home)
+
+func _vw_go_home(_sim, home: Vector3) -> void:
+	vw_goal = "home"; vw_arrived = false
+	vw_pts = vw_home_pts.duplicate() if not vw_home_pts.is_empty() else [home]
+	if vw_pts.size() > 0: vw_pts[vw_pts.size() - 1] = home
+
+func _vw_step(gdt: float) -> Vector3:
+	var before: Vector3 = vw_pos
+	var left = 1.6 * gdt
+	while left > 0.0 and not vw_pts.is_empty():
+		var nx: Vector3 = vw_pts[0]
+		var d = vw_pos.distance_to(nx)
+		if d <= left:
+			vw_pos = nx; left -= d; vw_pts.pop_front()
+		else:
+			vw_pos = vw_pos + (nx - vw_pos) / d * left; left = 0.0
+	if vw_pts.is_empty(): vw_arrived = true
+	return vw_pos - before
+var _lie_h = 0.61
+const LEG_BONES := ["thigh_l", "thigh_r", "calf_l", "calf_r", "foot_l", "foot_r"]
+var _leg_idx = []
+
+# lying: legs go straight (blend leg bones to the rest pose) in sync with the tilt -> no "legs in the air"
+func _straighten_legs(u: float) -> void:
+	if skel == null: return
+	if _leg_idx.is_empty():
+		for n in LEG_BONES: _leg_idx.append(skel.find_bone(n))
+	for i in _leg_idx:
+		if i < 0: continue
+		var q: Quaternion = skel.get_bone_pose_rotation(i)
+		skel.set_bone_pose_rotation(i, q.slerp(skel.get_bone_rest(i).basis.get_rotation_quaternion(), clampf(u, 0, 1)))
+
+# lying: put the pelvis on the mattress centre (measured from the current pose, any clip / model scale)
+func _place_lying() -> void:
+	if skel == null or hip_idx < 0: return
+	var n: Node = skel
+	var chain = Transform3D()
+	while n != model and n != null:
+		chain = (n as Node3D).transform * chain if n is Node3D else chain
+		n = n.get_parent()
+	var pl: Vector3 = chain * skel.get_bone_global_pose(hip_idx).origin
+	var R = Basis(Vector3(1, 0, 0), -lie_k * PI / 2.0).scaled(model.scale)
+	var d_sit = Basis.from_scale(model.scale) * pl + Vector3(0, _gy, 0)
+	var d_lie = Vector3(0, _lie_h + 0.1, 0)
+	model.position = d_sit.lerp(d_lie, lie_k) - R * pl
 var death_hold = false
 var slide = 0.0
 var sat0 = -1.0
@@ -508,11 +663,24 @@ func sync(sim, e: Dictionary, gdt: float, view) -> void:
 			var b = _bed_of(view, sp)
 			var lk = 1.0 if vs.ph == "sat" else (k if vs.ph == "down" else 1.0 - k)
 			var bk = str(b.t.get("k")) if b else ""
-			if b and bk.begins_with("bed") and _bed_side(sim, b) != 0:
+			if b and (bk.begins_with("bed") or bk == "scanner") and _bed_side(sim, b) != 0:
 				# v43 bed: walk to the bed side, sit on the edge (back to the bed), swing in and lie down; reverse to get up
 				var r = _bed_pose(sim, b, sp, lk, tgt)
-				tgt = r.pos; yaw = r.yaw; anim = r.anim; spd = r.spd; want_lie = r.lie; lie_h = MATT_H.bed
-				_seat_w = r.w; _seat_h = .56
+				tgt = r.pos; yaw = r.yaw; anim = r.anim; spd = r.spd; want_lie = r.lie; lie_h = MATT_H.get(bk, .61)
+				_seat_w = r.w; _seat_h = lie_h - .05
+				lie_direct = true
+				if bk == "scanner":
+					# CT table slides into the gantry with the patient (procFx sc46), only while fully lying
+					var fwd = Vector3(sin(b.piv.rotation.y), 0, cos(b.piv.rotation.y))
+					if st == "treat" and vs.ph == "sat":
+						if sat0 < 0: sat0 = 0.0
+						sat0 += gdt
+						var kk = ease01(sat0 / 0.9) * ease01((float(e.t) - SEAT_T.lie) / 0.9)
+						tgt -= fwd * 0.75 * kk
+						view.set_room_k(e.get("room"), kk, true)
+					else:
+						sat0 = -1.0
+						view.set_room_k(e.get("room"), 0.0, true)
 			elif b:
 				lie_h = MATT_H.get(bk, 0.61)
 				var bc = b.piv.position
@@ -545,8 +713,12 @@ func sync(sim, e: Dictionary, gdt: float, view) -> void:
 			var M = A + f * float(SIT_F.get(sk, .2))
 			var SD = float(STAND_F.get(sk, .65))
 			var Sx = A + f * SD
+			if not is_same(_vs_side_ref, vs):
+				_vs_side_ref = vs; _vs_side = _side_approach(sim, view, A, f)
+			if _vs_side != Vector3.ZERO: Sx = A + _vs_side * (.5 if (_vs_from - A).length() < .8 else .62) + f * .06
 			_seat_h = float(SEAT_H.get(sk, .5))
 			if vs.ph == "down":
+				if _vs_via == null and _vs_side != Vector3.ZERO: _vs_via = Vector3.INF
 				if _vs_via == null:
 					var along = (_vs_from - A).dot(f)
 					_vs_via = (A + Vector3(-f.z, 0, f.x) * 1.05 + f * SD) if along < SD * .45 and (_vs_from - Sx).length() > .3 else Vector3.INF
@@ -594,6 +766,11 @@ func sync(sim, e: Dictionary, gdt: float, view) -> void:
 		if r:
 			for q in sim.S.pats:
 				if q.get("room") == r.id and q.state == "treat": p = q; break
+			if p == null and r.type == "lab":
+				for q in sim.S.pats:
+					if q.get("room") == r.id and q.state == "enter":
+						if vw_goal != "pat": _vw_go_patient(sim, tgt, r)
+						break
 		if p:
 			var qq = procQ(p)
 			# face the patient (lying patients: their body centre on the bed/table)
@@ -615,12 +792,22 @@ func sync(sim, e: Dictionary, gdt: float, view) -> void:
 					anim = "Interact" if qq > .18 and qq < .82 else "Idle_Talking"
 					spd = 0.7
 				"lab":
-					anim = "Interact" if qq > .2 and qq < .85 else "Idle_Talking"
+					# 0.9.4: the nurse walks round the counter to the patient's right side, draws blood there, walks back
+					anim = "Idle_Talking"
 					spd = 0.6
-					show_tube = qq > .3 and qq < .9
-					if pv and qq > .22 and qq < .82:
-						reach_world = pv.hand_world("hand_r") + Vector3(0, .06, 0)
-						reach_w = ease01((qq - .22) / .1) * (1.0 - ease01((qq - .74) / .08))
+					if pv and qq < .84:
+						if vw_goal != "pat" or (not vw_planned_pv and vw_arrived): _vw_go_patient(sim, vw_pos if vw_pos != null else tgt, r, pv)
+						if vw_goal == "pat" and vw_arrived:
+							vw_arr_t += gdt
+							var hw = pv.hand_world("hand_r")
+							var dh = hw - tgt
+							if vw_pos != null: dh = hw - vw_pos
+							yaw = lerp_angle(rotation.y, atan2(dh.x, dh.z), minf(1.0, gdt * 6.0 + 0.05))
+							anim = "Interact"
+							show_tube = vw_arr_t > .5
+							reach_world = hw + Vector3(0, .06, 0)
+							reach_w = ease01(vw_arr_t / .5) * ease01((qq - .14) / .08) * (1.0 - ease01((qq - .74) / .08))
+					elif vw_goal == "pat": _vw_go_home(sim, tgt)
 				"ward", "icu", "derma":
 					anim = "Interact" if fmod(qq * 3.0, 1.0) < .35 else "Idle"
 				_:
@@ -700,7 +887,9 @@ func sync(sim, e: Dictionary, gdt: float, view) -> void:
 			var dg = greet_at - tgt
 			if dg.length() > 0.2: yaw = lerp_angle(rotation.y, atan2(dg.x, dg.z), minf(1.0, gdt * 6.0))
 	# lie blend: rotate the whole model around X onto the mattress (no lie clip in UAL1); pelvis over bed centre
-	lie_k = want_lie if absf(want_lie - lie_k) < 0.02 else lerpf(lie_k, want_lie, minf(1.0, gdt * 6.0 + 0.0001))
+	if lie_direct: lie_k = want_lie
+	else: lie_k = want_lie if absf(want_lie - lie_k) < 0.02 else lerpf(lie_k, want_lie, minf(1.0, gdt * 6.0 + 0.0001))
+	lie_direct = false
 	if not seated and not lab_sit: _seat_w = 0.0
 	# seat height (45.x legs()): lift/lower the body so the hips land on the real cushion height
 	var gy_want = 0.0
@@ -708,9 +897,10 @@ func sync(sim, e: Dictionary, gdt: float, view) -> void:
 		var ty = (skel.get_bone_global_pose(thigh_l).origin.y + skel.get_bone_global_pose(thigh_r).origin.y) * 0.5 * model.scale.y
 		gy_want = clampf((_seat_h + .08 - ty) * _seat_w, -.3, .3)
 	_gy = lerpf(_gy, gy_want, minf(1.0, gdt * 12.0 + 0.0001))
+	_lie_h = lie_h
 	if lie_k > 0.001:
 		model.rotation.x = -lie_k * PI / 2.0
-		model.position = Vector3(0, _gy * (1.0 - lie_k) + lie_k * (lie_h + 0.1), lie_k * pelvis_h * 0.9)
+		_place_lying()
 	else:
 		model.rotation.x = 0.0
 		model.position = Vector3(0, _gy, 0)
@@ -719,6 +909,27 @@ func sync(sim, e: Dictionary, gdt: float, view) -> void:
 	if badge:
 		badge.visible = st != "dead"
 		badge.global_position = head_world() + Vector3(0, .42, 0)
+	# view-side: a walking body stops at the edge of solid furniture instead of walking through it
+	if vs == null and lie_k < 0.05 and vw_pos == null and view and st != "dead":
+		var tx = int(floor(tgt.x)); var tz = int(floor(tgt.z))
+		var it = view.item_at_tile(tx, tz)
+		var bad = it != null and not it.get("soft") and str(it.k) != "plant"
+		if bad:
+			tgt = _nearest_free(sim, view, tgt, _last_free)
+			if anim == "Walk" or anim == "Walk_Formal": anim = "Idle"
+		else:
+			_last_free = tgt
+	if vw_pos != null:
+		if vw_goal == "pat" and not (is_staff and (st == "work" or st == "idle")): _vw_go_home(sim, tgt)
+		if vw_goal == "home" and vw_pts.is_empty(): vw_pts = [tgt]
+		var mv = _vw_step(gdt)
+		if mv.length() > 0.0005:
+			anim = "Walk"; spd = 0.95
+			yaw = lerp_angle(rotation.y, atan2(mv.x, mv.z), minf(1.0, gdt * 10.0 + 0.1))
+			reach_w = 0.0; show_tube = false
+		elif vw_goal == "home":
+			vw_pos = null; vw_goal = ""
+		if vw_pos != null: tgt = vw_pos
 	position = tgt
 	rotation.y = yaw
 	if show_pill or pill: _pill().visible = show_pill
@@ -731,9 +942,11 @@ func sync(sim, e: Dictionary, gdt: float, view) -> void:
 	if frame_i % lod_every == 0:
 		ap.advance(acc)
 		acc = 0.0
+		if lie_k > 0.001: _straighten_legs(lie_k)
 		if reach_w > 0.01:
 			var tw = reach_world if reach_world != Vector3.INF else (global_transform * reach_r if reach_r != Vector3.INF else Vector3.INF)
 			if tw != Vector3.INF: _reach("upperarm_r", "hand_r", tw, reach_w)
+	if lie_k > 0.001: _place_lying()
 	# head scale (pump/inflate): applied after the animation pose
 	head_scale = lerpf(head_scale, hs_target, minf(1.0, gdt * 4.0 + 0.0001))
 	if skel and head_idx >= 0 and absf(head_scale - 1.0) > 0.005:
