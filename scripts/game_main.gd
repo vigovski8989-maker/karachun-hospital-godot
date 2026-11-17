@@ -117,6 +117,7 @@ func _parse_args() -> void:
 		elif a.begins_with("--zoom="): dbg_zoom = float(a.substr(7))
 		elif a.begins_with("--focus="): dbg_focus = a.substr(8)
 		elif a.begins_with("--demo="): dbg_demo = a.substr(7)
+		elif a.begins_with("--camrot="): cam.dir = cam.dir.rotated(Vector3.UP, deg_to_rad(float(a.substr(9))))
 		elif a.begins_with("--watch="):
 			var w = a.substr(8).split(":")
 			dbg_watch = w[0]

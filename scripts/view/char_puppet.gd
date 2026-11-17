@@ -79,9 +79,97 @@ func setup(glb: String, tint = null, scale_k := 1.0) -> void:
 			if m is StandardMaterial3D and m.metallic > 0.5:
 				var d: StandardMaterial3D = m.duplicate()
 				d.metallic = 0.0; d.roughness = 0.8; d.metallic_specular = 0.28
-				mi.set_surface_override_material(si, d)
 				skin_mats.append(d)
+				mi.set_surface_override_material(si, d)
+	# shoes are painted onto the foot geometry of every skinned single-surface mesh (body AND clothes: the UBC
+	# outfits model the feet inside the trousers mesh, which used to get the shirt tint) -> skin_shoe.gdshader
+	if model.find_child("*Shoes*", true, false) == null:
+		for mi in model.find_children("*", "MeshInstance3D", true, false):
+			if mi.skin == null or mi.mesh == null or mi.mesh.get_surface_count() != 1: continue
+			var m = mi.get_surface_override_material(0)
+			if m == null: m = mi.mesh.surface_get_material(0)
+			if not m is StandardMaterial3D: continue
+			var bm = _shoe_mesh(glb + ":" + str(mi.name), mi)
+			if bm == null: continue
+			mi.mesh = bm
+			var sm = ShaderMaterial.new()
+			sm.shader = SKIN_SHADER
+			shoe_sms.append([sm, m])
+			mi.set_surface_override_material(0, sm)
+	_sync_body()
 	play("Idle_Loop")
+
+const SKIN_SHADER = preload("res://shaders/skin_shoe.gdshader")
+var shoe_sms = []   # [ShaderMaterial, StandardMaterial3D proxy holding texture/tone/emission]
+static var _shoe_meshes = {}
+const FOOT_BONES := ["foot_l", "foot_r", "ball_l", "ball_r", "ball_leaf_l", "ball_leaf_r"]
+
+# bake the shoe mask into vertex COLOR (r = shoe, g = sole, b = welt stripe) and puff the foot out a few mm so it reads as a shoe
+static func _shoe_mesh(key: String, mi: MeshInstance3D) -> ArrayMesh:
+	if _shoe_meshes.has(key): return _shoe_meshes[key]
+	var src: ArrayMesh = mi.mesh
+	var a = src.surface_get_arrays(0)
+	var V: PackedVector3Array = a[Mesh.ARRAY_VERTEX]
+	var N: PackedVector3Array = a[Mesh.ARRAY_NORMAL]
+	var Bn = a[Mesh.ARRAY_BONES]
+	var W = a[Mesh.ARRAY_WEIGHTS]
+	if Bn == null or W == null or V.size() == 0:
+		_shoe_meshes[key] = null; return null
+	var per: int = Bn.size() / V.size()
+	var foot = {}
+	var calf = {}
+	for i in mi.skin.get_bind_count():
+		var nm = str(mi.skin.get_bind_name(i))
+		if nm in FOOT_BONES: foot[i] = true
+		if nm.begins_with("calf"): calf[i] = true
+	var C = PackedColorArray(); C.resize(V.size())
+	var V2 = V.duplicate()
+	var mx = 0.0
+	for vi in V.size():
+		var wf = 0.0
+		var wc = 0.0
+		for j in per:
+			var b = int(Bn[vi * per + j]); var w = float(W[vi * per + j])
+			if foot.has(b): wf += w
+			elif calf.has(b): wc += w
+		var y = V[vi].y
+		var mk = clampf((wf - 0.2) / 0.3, 0.0, 1.0)
+		if y < 0.125 and (wf + wc) > 0.5: mk = maxf(mk, clampf((0.125 - y) / 0.02, 0.0, 1.0))   # ankle collar
+		var sole = clampf((0.032 - y) / 0.012, 0.0, 1.0) * mk
+		var welt = clampf(1.0 - absf(y - 0.042) / 0.008, 0.0, 1.0) * mk
+		C[vi] = Color(mk, sole, welt, 1.0)
+		mx = maxf(mx, mk)
+		if mk > 0.0 and N.size() == V.size():
+			var n = N[vi]
+			n.y = maxf(n.y, -0.2) if y < 0.02 else n.y
+			V2[vi] = V[vi] + n * 0.009 * mk
+	if mx <= 0.0:
+		_shoe_meshes[key] = null; return null
+	a[Mesh.ARRAY_VERTEX] = V2
+	a[Mesh.ARRAY_COLOR] = C
+	for ci in [Mesh.ARRAY_CUSTOM0, Mesh.ARRAY_CUSTOM1, Mesh.ARRAY_CUSTOM2, Mesh.ARRAY_CUSTOM3]:
+		a[ci] = null
+	var am = ArrayMesh.new()
+	for bi in src.get_blend_shape_count(): am.add_blend_shape(src.get_blend_shape_name(bi))
+	am.blend_shape_mode = src.blend_shape_mode
+	var bsa = src.surface_get_blend_shape_arrays(0)
+	var flags = src.surface_get_format(0) & (Mesh.ARRAY_FLAG_USE_8_BONE_WEIGHTS)
+	am.add_surface_from_arrays(Mesh.PRIMITIVE_TRIANGLES, a, bsa, {}, flags)
+	if am.get_surface_count() == 0:
+		_shoe_meshes[key] = null; return null
+	_shoe_meshes[key] = am
+	return am
+
+func _sync_body() -> void:
+	for pr in shoe_sms:
+		var sm: ShaderMaterial = pr[0]
+		var px: StandardMaterial3D = pr[1]
+		sm.set_shader_parameter("tex", px.albedo_texture)
+		sm.set_shader_parameter("tone", Vector3(px.albedo_color.r, px.albedo_color.g, px.albedo_color.b))
+		sm.set_shader_parameter("has_nrm", px.normal_enabled and px.normal_texture != null)
+		if px.normal_texture: sm.set_shader_parameter("nrm", px.normal_texture)
+		var e = px.emission * px.emission_energy_multiplier if px.emission_enabled else Color.BLACK
+		sm.set_shader_parameter("emis", Vector3(e.r, e.g, e.b))
 
 var skin_mats = []
 var healed_look = false
@@ -110,31 +198,17 @@ func set_look(tone: Color, shoe: Color, dis: String) -> void:
 				"lowbattery": m.albedo_color = tone.darkened(0.25) * Color(0.85, 0.9, 1.0)
 				"grumpliver", "lazyheart": m.albedo_color = tone * Color(1.0, 0.95, 0.7)
 				"fizzyblood", "drumheart", "lovesickheart": m.albedo_color = tone * Color(1.0, 0.86, 0.86)
+	_sync_body()
 	_shoes(shoe)
 	if dis == "tail": _tail()
 
 func _shoes(col: Color) -> void:
-	if skel == null or skel.find_bone("foot_l") < 0: return
-	var mt = Geo.mat(col, 0.55)
-	var sole = Geo.mat(Color(0.12, 0.12, 0.12) if col.v > 0.6 else Color(0.9, 0.9, 0.88), 0.7)
-	for sd in ["l", "r"]:
-		var fi = skel.find_bone("foot_" + sd)
-		var bi = skel.find_bone("ball_" + sd)
-		var F = skel.get_bone_global_rest(fi)
-		var B = skel.get_bone_global_rest(bi)
-		# shoe boxes in skeleton (rest, standing) space -> bone-local
-		var xs = F.origin.x
-		var heel = Node3D.new()
-		var rear = Transform3D(Basis(), Vector3(xs, 0.055, (F.origin.z - 0.075 + B.origin.z + 0.01) / 2.0))
-		var lr = B.origin.z + 0.01 - (F.origin.z - 0.075)
-		var bx = Geo.box(heel, Vector3(0.115, 0.11, lr), mt, Vector3.ZERO, 0.03)
-		Geo.box(heel, Vector3(0.12, 0.025, lr + 0.01), sole, Vector3(0, -0.045, 0), 0.0)
-		var toe = Node3D.new()
-		var front = Transform3D(Basis(), Vector3(xs, 0.045, B.origin.z + 0.06))
-		Geo.box(toe, Vector3(0.11, 0.085, 0.11), mt, Vector3.ZERO, 0.035)
-		Geo.box(toe, Vector3(0.115, 0.025, 0.12), sole, Vector3(0, -0.032, 0), 0.0)
-		_attach_rest("shoe_h_" + sd, heel, "foot_" + sd, F.affine_inverse() * rear)
-		_attach_rest("shoe_t_" + sd, toe, "ball_" + sd, B.affine_inverse() * front)
+	var sole = Color(0.93, 0.92, 0.88) if col.v < 0.75 else Color(0.25, 0.24, 0.23)
+	var lace = col.lerp(Color.WHITE, 0.55) if col.v < 0.75 else Color(0.55, 0.6, 0.68)
+	for pr in shoe_sms:
+		pr[0].set_shader_parameter("shoe", col)
+		pr[0].set_shader_parameter("sole", sole)
+		pr[0].set_shader_parameter("lace", lace)
 
 func _attach_rest(nm: String, node: Node3D, bone: String, xf: Transform3D) -> void:
 	if props.has(nm): return
@@ -250,9 +324,12 @@ func _ticket() -> Node3D:
 		ticket.visible = false
 	return ticket
 var hose: MeshInstance3D
-const SIT_F := {"bench": .14, "chair": .1, "sofa": .26, "wc": .1, "elchair": .08, "chair_office": .1, "stool": .1}
-const STAND_F := {"bench": .68, "chair": .62, "sofa": .7, "wc": .55, "elchair": .64, "chair_office": .62, "stool": .62}
-const SEAT_H := {"sofa": .52, "bench": .46, "wc": .5, "elchair": .50, "chair": .50, "chair_office": .50, "stool": .5}
+# root offset in front of the seat tile centre so the pelvis lands ~0.10 m in front of the backrest face.
+# Measured (harness/measure.gd): backrest face z -0.14 (chair/bench), -0.18 (office), -0.10 (sofa, elchair);
+# UAL Sitting_Idle puts the pelvis 0.33 m behind the root.
+const SIT_F := {"bench": .29, "chair": .29, "sofa": .33, "wc": .36, "elchair": .33, "chair_office": .25, "stool": .19}
+const STAND_F := {"bench": .72, "chair": .72, "sofa": .78, "wc": .7, "elchair": .78, "chair_office": .7, "stool": .66}
+const SEAT_H := {"sofa": .52, "bench": .46, "wc": .44, "elchair": .50, "chair": .50, "chair_office": .50, "stool": .5}
 var _vs_ref = null
 var _vs_from = Vector3.ZERO
 var _vs_via = null
@@ -595,7 +672,7 @@ func sync(sim, e: Dictionary, gdt: float, view) -> void:
 					else:
 						_seat_w = 1.0; anim = "Sitting_Idle"
 						reach_r = Vector3(-0.1, 0.92, 0.62); reach_w = ease01((q2 - .14) / .08) * (1.0 - ease01((q2 - .82) / .06))
-					tgt += fl * (.1 * _seat_w)
+					tgt += fl * (float(SIT_F.stool) * _seat_w)
 				"reception":
 					# ticket hand-off: reach over the counter at q .45-.7, ticket in hand afterwards
 					if q2 > .45 and q2 < .7: anim = "Interact"

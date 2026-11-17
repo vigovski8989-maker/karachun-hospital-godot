@@ -201,7 +201,8 @@ func _make_puppet(e: Dictionary, staff: bool) -> CharPuppet:
 		elif dis in INV: glb = "invisible"
 		elif dis in MUM: glb = "mummy"
 		elif dis in ROCK: glb = "rocker"
-		tint = Color.from_hsv(_shirt_hue(float(e.get("hue", 0))) / 360.0, 0.6, 0.85) if glb == "patient_a" else null
+		var tc = Color.from_hsv(_shirt_hue(float(e.get("hue", 0))) / 360.0, 0.62, 0.9)
+		tint = Color(tc.r * 1.7, tc.g * 1.7, tc.b * 1.7, 1.0) if glb == "patient_a" else null
 		if e.get("vip"): tint = Color(0.15, 0.15, 0.18)
 		p.kind = "patient"
 	p.is_staff = staff
