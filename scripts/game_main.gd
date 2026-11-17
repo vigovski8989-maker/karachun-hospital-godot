@@ -269,6 +269,8 @@ func _dbg_ui() -> void:
 			"goals": hud.show_goals()
 			"menu": hud.show_menu()
 			"levels": hud.show_levels()
+			"win": hud.show_win()
+			"lose": hud.show_lose("Репутация упала ниже допустимой.")
 			"ghost": start_room(a[1])
 			"item": pick_item(a[1])
 			"pat":
@@ -323,7 +325,8 @@ func center_cam() -> void:
 	var S: Dictionary = sim.S
 	cam.map_size = Vector2(S.w, S.h)
 	cam.focus = Vector3(S.ent.x + 0.5, 0, S.h - 7.0)
-	cam.zoom = 13.0
+	var vsz = get_viewport().get_visible_rect().size
+	cam.zoom = 16.0 if vsz.y > vsz.x else 22.0
 	cam.apply()
 
 # ---------- saves ----------

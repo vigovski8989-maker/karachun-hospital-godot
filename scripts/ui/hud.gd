@@ -11,7 +11,11 @@ var top_cured: Label
 var chips_box: HFlowContainer
 var speed_btns = {}
 var msg_box: VBoxContainer
-var build_bar: HFlowContainer
+var build_bar: PanelContainer
+var build_vb: VBoxContainer
+var top_pc: PanelContainer
+var safe_top = 0.0
+var safe_bot = 0.0
 var panel: PanelContainer
 var panel_vb: VBoxContainer
 var panel_scroll: ScrollContainer
@@ -51,9 +55,16 @@ func _build_top() -> void:
 	pc.set_anchors_preset(Control.PRESET_TOP_WIDE)
 	pc.mouse_filter = Control.MOUSE_FILTER_STOP
 	add_child(pc)
+	top_pc = pc
+	var tv = VBoxContainer.new()
+	tv.add_theme_constant_override("separation", 4)
+	pc.add_child(tv)
 	var hb = HBoxContainer.new()
-	hb.add_theme_constant_override("separation", 14)
-	pc.add_child(hb)
+	hb.add_theme_constant_override("separation", 10)
+	tv.add_child(hb)
+	var hb2 = HBoxContainer.new()
+	hb2.add_theme_constant_override("separation", 6)
+	tv.add_child(hb2)
 	top_money = _stat(hb, "💰")
 	top_rep = _stat(hb, "⭐")
 	top_date = _stat(hb, "📅")
@@ -62,14 +73,16 @@ func _build_top() -> void:
 	chips_box.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	chips_box.add_theme_constant_override("h_separation", 4)
 	chips_box.add_theme_constant_override("v_separation", 2)
-	hb.add_child(chips_box)
+	hb2.add_child(chips_box)
 	var sp = HBoxContainer.new()
 	sp.add_theme_constant_override("separation", 4)
-	hb.add_child(sp)
+	sp.size_flags_vertical = Control.SIZE_SHRINK_BEGIN
+	hb2.add_child(sp)
 	for s in [[0, "⏸"], [1, "▶"], [2, "▶▶"], [4, "▶▶▶"]]:
 		var b = Button.new()
 		b.text = s[1]
-		b.custom_minimum_size = Vector2(52, 40)
+		b.custom_minimum_size = Vector2(62, 56)
+		b.add_theme_font_size_override("font_size", 18)
 		var spd: int = s[0]
 		b.pressed.connect(func(): game.set_speed(spd))
 		sp.add_child(b)
@@ -77,11 +90,13 @@ func _build_top() -> void:
 
 func _stat(hb: HBoxContainer, icon: String) -> Label:
 	var h = HBoxContainer.new()
-	h.add_theme_constant_override("separation", 4)
+	h.add_theme_constant_override("separation", 3)
+	h.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	var i = Label.new(); i.text = icon
 	h.add_child(i)
 	var l = Label.new()
 	l.add_theme_font_override("font", UIKit.font_800)
+	l.add_theme_font_size_override("font_size", 22 if icon == "💰" else 20)
 	l.add_theme_color_override("font_color", UIKit.C_GOLD)
 	h.add_child(l)
 	hb.add_child(h)
@@ -90,7 +105,7 @@ func _stat(hb: HBoxContainer, icon: String) -> Label:
 func _build_msgs() -> void:
 	msg_box = VBoxContainer.new()
 	msg_box.position = Vector2(8, 66)
-	msg_box.custom_minimum_size = Vector2(560, 0)
+	msg_box.custom_minimum_size = Vector2(500, 0)
 	msg_box.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	msg_box.add_theme_constant_override("separation", 2)
 	add_child(msg_box)
@@ -106,7 +121,7 @@ func _build_tut() -> void:
 	tut_lbl = Label.new()
 	tut_lbl.add_theme_color_override("font_color", Color(0.15, 0.1, 0.0))
 	tut_lbl.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-	tut_lbl.custom_minimum_size = Vector2(420, 0)
+	tut_lbl.custom_minimum_size = Vector2(480, 0)
 	tut_box.add_child(tut_lbl)
 	tut_box.visible = false
 	add_child(tut_box)
@@ -115,24 +130,25 @@ func _build_bottom() -> void:
 	var pc = PanelContainer.new()
 	pc.add_theme_stylebox_override("panel", UIKit.bar_style())
 	pc.set_anchors_preset(Control.PRESET_BOTTOM_WIDE)
+	pc.resized.connect(func(): call_deferred("_fit"))
 	pc.grow_vertical = Control.GROW_DIRECTION_BEGIN
 	pc.mouse_filter = Control.MOUSE_FILTER_STOP
 	add_child(pc)
 	bar = HBoxContainer.new()
-	bar.add_theme_constant_override("separation", 6)
+	bar.add_theme_constant_override("separation", 4)
 	pc.add_child(bar)
 	pc.set_anchors_and_offsets_preset(Control.PRESET_BOTTOM_WIDE, Control.PRESET_MODE_MINSIZE)
 	bottom_pc = pc
-	for b in [["🏗", "Кабинеты", show_rooms], ["🪴", "Предметы", show_items], ["👩‍⚕️", "Нанять", show_hire], ["👥", "Персонал", show_staff], ["🎯", "Цели", show_goals], ["☰", "Меню", show_menu]]:
+	for b in [["🏗", "Кабинеты", show_rooms, "rooms"], ["🪴", "Предметы", show_items, "items"], ["👩‍⚕️", "Нанять", show_hire, "hire"], ["👥", "Персонал", show_staff, "staff"], ["🎯", "Цели", show_goals, "goals"], ["☰", "Меню", show_menu, "menu"]]:
 		var bt = Button.new()
 		bt.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-		bt.custom_minimum_size = Vector2(0, 62)
+		bt.custom_minimum_size = Vector2(0, 86)
 		var vb = VBoxContainer.new()
 		vb.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 		vb.alignment = BoxContainer.ALIGNMENT_CENTER
 		vb.add_theme_constant_override("separation", -2)
 		vb.mouse_filter = Control.MOUSE_FILTER_IGNORE
-		for t in [[b[0], 28], [b[1], 15]]:
+		for t in [[b[0], 32], [b[1], 15]]:
 			var l = Label.new(); l.text = t[0]; l.add_theme_font_size_override("font_size", t[1])
 			l.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 			l.mouse_filter = Control.MOUSE_FILTER_IGNORE
@@ -140,22 +156,33 @@ func _build_bottom() -> void:
 			vb.add_child(l)
 		bt.add_child(vb)
 		var cb: Callable = b[2]
-		bt.pressed.connect(func(): game.click(); cb.call())
+		var pk: String = b[3]
+		# second tap on the same tab closes the sheet
+		bt.pressed.connect(func():
+			game.click()
+			if panel.visible and panel_kind == pk: close_panel()
+			else: cb.call())
 		bar.add_child(bt)
 	call_deferred("_fix_bottom")
 
 func _fix_bottom() -> void:
-	if OS.get_cmdline_user_args().has("--dbgui"): print("HUD size ", size, " vp ", get_viewport_rect().size, " bottom ", bottom_pc.get_global_rect())
 	bottom_pc.set_anchors_and_offsets_preset(Control.PRESET_BOTTOM_WIDE, Control.PRESET_MODE_MINSIZE)
+	_fit()
+	if OS.get_cmdline_user_args().has("--dbgui"): print("HUD size ", size, " vp ", get_viewport_rect().size, " bottom ", bottom_pc.get_global_rect(), " top ", top_pc.get_global_rect())
 
 func _build_buildbar() -> void:
-	build_bar = HFlowContainer.new()
+	# build-mode bottom sheet: replaces the nav bar while a room / item is being placed
+	build_bar = PanelContainer.new()
+	var sb: StyleBoxFlat = UIKit.theme().get_stylebox("panel", "PanelContainer").duplicate()
+	sb.corner_radius_bottom_left = 0; sb.corner_radius_bottom_right = 0
+	sb.content_margin_top = 12; sb.content_margin_bottom = 12
+	build_bar.add_theme_stylebox_override("panel", sb)
 	build_bar.set_anchors_preset(Control.PRESET_BOTTOM_WIDE)
-	build_bar.offset_top = -150; build_bar.offset_bottom = -76
-	build_bar.alignment = FlowContainer.ALIGNMENT_CENTER
-	build_bar.add_theme_constant_override("h_separation", 6)
-	build_bar.add_theme_constant_override("v_separation", 6)
-	build_bar.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	build_bar.grow_vertical = Control.GROW_DIRECTION_BEGIN
+	build_bar.mouse_filter = Control.MOUSE_FILTER_STOP
+	build_vb = VBoxContainer.new()
+	build_vb.add_theme_constant_override("separation", 8)
+	build_bar.add_child(build_vb)
 	build_bar.visible = false
 	add_child(build_bar)
 
@@ -192,7 +219,7 @@ func _build_modal() -> void:
 	cc.add_child(modal_panel)
 	var sc = ScrollContainer.new()
 	sc.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
-	sc.custom_minimum_size = Vector2(560, 0)
+	sc.custom_minimum_size = Vector2(480, 0)
 	modal_panel.add_child(sc)
 	modal_vb = VBoxContainer.new()
 	modal_vb.size_flags_horizontal = Control.SIZE_EXPAND_FILL
@@ -204,14 +231,42 @@ func _notification(what: int) -> void:
 	if what == NOTIFICATION_RESIZED and panel:
 		_fit()
 
+func _safe() -> void:
+	# notch / gesture-bar insets (phones only; on desktop the safe area is the whole monitor, not our window)
+	safe_top = 0.0; safe_bot = 0.0
+	if not OS.has_feature("mobile"): return
+	var ws = Vector2(DisplayServer.window_get_size())
+	if ws.x <= 0 or ws.y <= 0: return
+	var sa = DisplayServer.get_display_safe_area()
+	var k = get_viewport_rect().size.y / ws.y
+	safe_top = maxf(0.0, sa.position.y) * k
+	safe_bot = maxf(0.0, ws.y - sa.end.y) * k
+
 func _fit() -> void:
-	var vh = get_viewport_rect().size.y
+	_safe()
+	var vs = get_viewport_rect().size
+	var vh = vs.y
+	top_pc.offset_top = safe_top
+	bottom_pc.offset_top = -(bottom_pc.get_combined_minimum_size().y + safe_bot)
+	bottom_pc.offset_bottom = 0
+	var bsb = bottom_pc.get_theme_stylebox("panel")
+	if bsb is StyleBoxFlat: bsb.content_margin_bottom = 6 + safe_bot
+	build_bar.offset_bottom = 0
+	var bbs = build_bar.get_theme_stylebox("panel")
+	if bbs is StyleBoxFlat: bbs.content_margin_bottom = 12 + safe_bot
+	var top_h = safe_top + top_pc.get_combined_minimum_size().y
+	msg_box.position = Vector2(8, top_h + 6)
+	msg_box.custom_minimum_size.x = vs.x - 16
+	tut_box.position.y = top_h + 6
+	tut_lbl.custom_minimum_size.x = minf(560, vs.x - 48)
+	var bot_h = bottom_pc.get_combined_minimum_size().y
+	panel.offset_bottom = -(bot_h + 4)
 	panel_scroll.custom_minimum_size.y = 0
 	var want = panel_vb.get_combined_minimum_size().y
-	panel_scroll.custom_minimum_size = Vector2(0, minf(want, vh * 0.58))
+	panel_scroll.custom_minimum_size = Vector2(0, minf(want, (vh - top_h - bot_h) * 0.86))
 	var sc: ScrollContainer = modal_panel.get_child(0)
 	var mw = modal_vb.get_combined_minimum_size().y
-	sc.custom_minimum_size = Vector2(minf(620, get_viewport_rect().size.x - 40), minf(mw, vh - 60))
+	sc.custom_minimum_size = Vector2(minf(640, vs.x - 56), minf(mw, vh - top_h - 60))
 
 # ---------- frame update ----------
 func tick(dt: float) -> void:
@@ -228,7 +283,7 @@ func tick(dt: float) -> void:
 			_reopen()
 	if build_bar.visible and game.ghost != null and ghost_info:
 		ghost_info.text = sim.ghostLabel(game.ghost)
-		ghost_ok.text = "✔ $" + str(sim.roomBuildCost(game.ghost))
+		ghost_ok.text = "✔ Построить $" + str(sim.roomBuildCost(game.ghost))
 
 func _hud() -> void:
 	var S: Dictionary = sim.S
@@ -247,7 +302,7 @@ func _hud() -> void:
 			var pc = PanelContainer.new()
 			var col = Color("#345") if str(c[1]) == "" else Color(str(c[1]))
 			pc.add_theme_stylebox_override("panel", UIKit.chip_style(col))
-			var l = Label.new(); l.text = c[0]; l.add_theme_font_size_override("font_size", 15)
+			var l = Label.new(); l.text = c[0]; l.add_theme_font_size_override("font_size", 17)
 			pc.add_child(l)
 			if str(c[0]).begins_with("🏆"):
 				pc.mouse_filter = Control.MOUSE_FILTER_STOP
@@ -257,7 +312,7 @@ func _hud() -> void:
 		var b: Button = speed_btns[s]
 		UIKit.style_btn(b, "on" if s == sim.speed else "blue")
 	var ts: int = sim.tutStep() if not S.get("tutOff") else -1
-	tut_box.visible = ts >= 0 and not panel.visible and not modal_bg.visible
+	tut_box.visible = ts >= 0 and not panel.visible and not modal_bg.visible and not build_bar.visible
 	if ts >= 0: tut_lbl.text = "🎓 " + sim.TUT_TEXT[ts]
 	tut_box.position.x = (get_viewport_rect().size.x - tut_box.size.x) / 2.0
 
@@ -269,7 +324,7 @@ func _msgs() -> void:
 		var pc = PanelContainer.new()
 		pc.add_theme_stylebox_override("panel", UIKit.chip_style(Color(0, 0, 0, 0.5)))
 		var l = Label.new(); l.text = m.text; l.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-		l.add_theme_font_size_override("font_size", 16)
+		l.add_theme_font_size_override("font_size", 18)
 		pc.add_child(l)
 		pc.set_meta("t", now)
 		msg_box.add_child(pc)
@@ -322,7 +377,7 @@ func _reopen() -> void:
 func h3(t: String, vb: VBoxContainer = null) -> void:
 	var l = Label.new(); l.text = t
 	l.add_theme_font_override("font", UIKit.font_800)
-	l.add_theme_font_size_override("font_size", 22)
+	l.add_theme_font_size_override("font_size", 25)
 	l.add_theme_color_override("font_color", Color("#e9f4ff"))
 	l.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	(vb if vb else panel_vb).add_child(l)
@@ -336,7 +391,7 @@ func h4(t: String, vb: VBoxContainer = null) -> void:
 
 func small(t: String, vb: VBoxContainer = null) -> void:
 	var l = Label.new(); l.text = t
-	l.add_theme_font_size_override("font_size", 15)
+	l.add_theme_font_size_override("font_size", 17)
 	l.add_theme_color_override("font_color", Color("#9bb"))
 	l.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	l.custom_minimum_size = Vector2(200, 0)
@@ -344,6 +399,7 @@ func small(t: String, vb: VBoxContainer = null) -> void:
 
 func btn(t: String, cb: Callable, kind := "", disabled := false) -> Button:
 	var b = Button.new(); b.text = t
+	b.custom_minimum_size = Vector2(UIKit.TOUCH_H, UIKit.TOUCH_H)
 	b.disabled = disabled
 	b.pressed.connect(func(): game.click(); cb.call())
 	UIKit.style_btn(b, kind)
@@ -363,7 +419,7 @@ func row(left: String, right = null, sub := "", vb: VBoxContainer = null, bold :
 	lv.add_child(l)
 	if sub != "":
 		var s = Label.new(); s.text = sub
-		s.add_theme_font_size_override("font_size", 15)
+		s.add_theme_font_size_override("font_size", 17)
 		s.add_theme_color_override("font_color", Color("#9bb"))
 		s.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 		s.custom_minimum_size = Vector2(160, 0)
@@ -374,13 +430,25 @@ func row(left: String, right = null, sub := "", vb: VBoxContainer = null, bold :
 		r.add_theme_font_override("font", UIKit.font_800)
 		if right_col != null: r.add_theme_color_override("font_color", right_col)
 		hb.add_child(r)
+	var under: HFlowContainer = null
+	if right is Array and right.size() >= 2:
+		under = HFlowContainer.new()
+		under.add_theme_constant_override("h_separation", 8)
+		under.add_theme_constant_override("v_separation", 8)
+		for b in right:
+			b.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+			under.add_child(b)
 	elif right is Array:
-		for b in right: hb.add_child(b)
+		for b in right:
+			b.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+			hb.add_child(b)
 	elif right is Control:
 		hb.add_child(right)
 	var cont = VBoxContainer.new()
-	cont.add_theme_constant_override("separation", 0)
+	cont.add_theme_constant_override("separation", 6)
 	cont.add_child(hb)
+	if under: cont.add_child(under)
+	hb.custom_minimum_size.y = 44
 	var line = ColorRect.new(); line.color = Color("#345"); line.custom_minimum_size = Vector2(0, 1)
 	cont.add_child(line)
 	(vb if vb else panel_vb).add_child(cont)
@@ -421,30 +489,70 @@ func modal_done() -> void:
 	call_deferred("_fit")
 
 # ---------- screens ----------
+func _card(icon: String, title: String, price: String, sub: String, cb: Callable, disabled := false, kind := "") -> Button:
+	var bt = Button.new()
+	bt.custom_minimum_size = Vector2(0, 150)
+	bt.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	bt.disabled = disabled
+	UIKit.style_btn(bt, kind)
+	var vb = VBoxContainer.new()
+	vb.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	vb.offset_left = 6; vb.offset_right = -6; vb.offset_top = 6; vb.offset_bottom = -6
+	vb.alignment = BoxContainer.ALIGNMENT_CENTER
+	vb.add_theme_constant_override("separation", 0)
+	vb.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	for t in [[icon, 38, Color.WHITE], [title, 19, Color.WHITE], [price, 21, UIKit.C_GOLD], [sub, 14, Color("#cde")]]:
+		if t[0] == "": continue
+		var l = Label.new(); l.text = t[0]
+		l.add_theme_font_size_override("font_size", t[1])
+		l.add_theme_color_override("font_color", t[2] if not disabled else Color(t[2], 0.55))
+		if t[1] == 19 or t[1] == 21: l.add_theme_font_override("font", UIKit.font_800)
+		l.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+		l.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+		l.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		vb.add_child(l)
+	bt.add_child(vb)
+	bt.pressed.connect(func(): game.click(); cb.call())
+	return bt
+
+func _grid() -> GridContainer:
+	var g = GridContainer.new()
+	g.columns = 2
+	g.add_theme_constant_override("h_separation", 10)
+	g.add_theme_constant_override("v_separation", 10)
+	g.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	panel_vb.add_child(g)
+	return g
+
 func show_rooms() -> void:
 	game.cancel_modes()
 	open_panel("rooms")
 	h3("🏗 Построить кабинет")
 	var S: Dictionary = sim.S
+	var g = _grid()
+	var locked = []
 	for k in sim.L().rooms:
 		var d: Dictionary = sim.D.rooms[k]
 		var lk: float = sim.lockCost(k)
 		if lk > 0:
-			row("🔒 " + d.name, null, "Исследование: " + str(int(floor(S.get("rp", 0)))) + "/" + str(int(lk)) + " очков (постройте Лабораторию исследований)", null, true)
-			continue
+			locked.append([k, lk]); continue
 		var kk: String = k
-		row(d.name + " — $" + str(int(d.cost)), [btn("Строить", func(): game.start_room(kk), "", S.money < d.cost)], str(d.get("desc", "")) + ((" Персонал: " + sim.D.staff[d.staff].name) if d.get("staff") else ""), null, true)
+		var stf = ("👤 " + sim.D.staff[d.staff].name) if d.get("staff") else "без персонала"
+		g.add_child(_card(UIKit.ROOM_ICON.get(k, "🏥"), d.name, "$" + str(int(d.cost)), stf, func(): game.start_room(kk), S.money < d.cost))
+	for e in locked:
+		var d: Dictionary = sim.D.rooms[e[0]]
+		g.add_child(_card("🔒", d.name, "🔬 " + str(int(floor(S.get("rp", 0)))) + "/" + str(int(e[1])), "нужна Лаборатория исследований", func(): pass, true))
 	finish_panel()
 
 func show_items() -> void:
 	open_panel("items")
 	h3("🪴 Предметы для коридора")
-	small("Выберите предмет, наведите его на пол коридора и нажмите ✔ Поставить.")
+	small("Выберите предмет, перетащите его пальцем на пол коридора и нажмите ✔ Поставить.")
+	var g = _grid()
 	for k in sim.D.items:
 		var d: Dictionary = sim.D.items[k]
 		var kk: String = k
-		row(d.name + " — $" + str(int(d.cost)), [btn("Выбрать", func(): game.pick_item(kk), "on" if game.item_mode == kk else "")], "", null, true)
-	row("Режим размещения", [btn("Выйти", func(): game.item_done(); close_panel(), "red")])
+		g.add_child(_card(UIKit.ITEM_ICON.get(k, "🪴"), d.name, "$" + str(int(d.cost)), "", func(): game.pick_item(kk), false, "on" if game.item_mode == kk else ""))
 	finish_panel()
 
 func show_hire() -> void:
@@ -679,48 +787,88 @@ func show_lot(i: int) -> void:
 	row("Купить за $" + str(int(l.price)), [btn("Купить", func(): if sim.buyLot(i): game.snd("build"); close_panel(), "grn", sim.S.money < l.price)])
 	finish_panel()
 
-# ---------- build bars ----------
-func show_build_bar_room() -> void:
+# ---------- build bars (big bottom sheet, replaces the nav bar) ----------
+func _bbtn(t: String, cb: Callable, kind := "", h := UIKit.BUILD_H, fs := 26) -> Button:
+	var b = btn(t, cb, kind)
+	b.custom_minimum_size = Vector2(UIKit.BUILD_H, h)
+	b.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	b.add_theme_font_size_override("font_size", fs)
+	return b
+
+func _brow() -> HBoxContainer:
+	var hb = HBoxContainer.new()
+	hb.add_theme_constant_override("separation", 8)
+	build_vb.add_child(hb)
+	return hb
+
+func _bar_open() -> void:
 	_clear_bar()
+	close_panel()
+	build_bar.visible = true
+	bottom_pc.visible = false
+	call_deferred("_fit")
+
+func show_build_bar_room() -> void:
+	_bar_open()
 	ghost_info = Label.new()
-	var pc = PanelContainer.new(); pc.add_theme_stylebox_override("panel", UIKit.chip_style(Color(15 / 255.0, 30 / 255.0, 45 / 255.0, 0.85)))
-	pc.add_child(ghost_info)
-	build_bar.add_child(pc)
+	ghost_info.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	ghost_info.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	ghost_info.add_theme_font_override("font", UIKit.font_800)
+	ghost_info.add_theme_font_size_override("font_size", 22)
+	build_vb.add_child(ghost_info)
+	var hint = Label.new(); hint.text = "Тащите пальцем рамку или карту · размер кнопками"
+	hint.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	hint.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	hint.add_theme_font_size_override("font_size", 16); hint.add_theme_color_override("font_color", Color("#9bb"))
+	build_vb.add_child(hint)
+	var r1 = _brow()
 	for n in 3:
 		var nn: int = n
-		build_bar.add_child(btn(["S", "M", "L"][n], func(): game.ghost_preset(nn)))
-	build_bar.add_child(btn("↔−", func(): game.ghost_size(-1, 0)))
-	build_bar.add_child(btn("↔+", func(): game.ghost_size(1, 0)))
-	build_bar.add_child(btn("↕−", func(): game.ghost_size(0, -1)))
-	build_bar.add_child(btn("↕+", func(): game.ghost_size(0, 1)))
-	build_bar.add_child(btn("🚪", func(): game.ghost_door()))
-	ghost_ok = btn("✔", func(): game.ghost_ok(), "grn")
-	build_bar.add_child(ghost_ok)
-	build_bar.add_child(btn("✖", func(): game.ghost_cancel(), "red"))
-	build_bar.visible = true
+		r1.add_child(_bbtn(["S", "M", "L"][n], func(): game.ghost_preset(nn), "", 72, 26))
+	r1.add_child(_bbtn("🚪↻", func(): game.ghost_door(), "", 72, 24))
+	var r2 = _brow()
+	r2.add_child(_bbtn("↔ −", func(): game.ghost_size(-1, 0), "", 72, 24))
+	r2.add_child(_bbtn("↔ +", func(): game.ghost_size(1, 0), "", 72, 24))
+	r2.add_child(_bbtn("↕ −", func(): game.ghost_size(0, -1), "", 72, 24))
+	r2.add_child(_bbtn("↕ +", func(): game.ghost_size(0, 1), "", 72, 24))
+	var r3 = _brow()
+	var cx = _bbtn("✖ Отмена", func(): game.ghost_cancel(), "red", UIKit.BUILD_H, 22)
+	cx.size_flags_stretch_ratio = 0.7
+	r3.add_child(cx)
+	ghost_ok = _bbtn("✔ Построить", func(): game.ghost_ok(), "grn", UIKit.BUILD_H, 24)
+	r3.add_child(ghost_ok)
 
 func show_build_bar_item(k: String) -> void:
-	_clear_bar()
+	_bar_open()
 	ghost_info = null
-	var pc = PanelContainer.new(); pc.add_theme_stylebox_override("panel", UIKit.chip_style(Color(15 / 255.0, 25 / 255.0, 32 / 255.0, 0.85)))
-	var l = Label.new(); l.text = "Наведите на пол: " + sim.D.items[k].name
-	pc.add_child(l)
-	build_bar.add_child(pc)
-	item_rot_btn = btn(sim.v41RotLbl(), func(): game.item_rotate(); item_rot_btn.text = sim.v41RotLbl())
-	build_bar.add_child(item_rot_btn)
-	build_bar.add_child(btn("🪴 Другой", show_items))
-	build_bar.add_child(btn("✔ Поставить", func(): game.item_confirm(), "grn"))
-	build_bar.add_child(btn("✖ Готово", func(): game.item_done(), "red"))
-	build_bar.visible = true
+	var l = Label.new(); l.text = UIKit.ITEM_ICON.get(k, "🪴") + " " + sim.D.items[k].name + " — $" + str(int(sim.D.items[k].cost))
+	l.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	l.add_theme_font_override("font", UIKit.font_800); l.add_theme_font_size_override("font_size", 22)
+	build_vb.add_child(l)
+	var hint = Label.new(); hint.text = "Тащите предмет пальцем по полу коридора"
+	hint.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	hint.add_theme_font_size_override("font_size", 16); hint.add_theme_color_override("font_color", Color("#9bb"))
+	build_vb.add_child(hint)
+	var r1 = _brow()
+	item_rot_btn = _bbtn(sim.v41RotLbl(), func(): game.item_rotate(); item_rot_btn.text = sim.v41RotLbl(), "", 72, 22)
+	r1.add_child(item_rot_btn)
+	r1.add_child(_bbtn("🪴 Другой", func(): game.item_done(); show_items(), "", 72, 22))
+	var r2 = _brow()
+	var dn = _bbtn("✖ Готово", func(): game.item_done(), "red", UIKit.BUILD_H, 22)
+	dn.size_flags_stretch_ratio = 0.7
+	r2.add_child(dn)
+	r2.add_child(_bbtn("✔ Поставить", func(): game.item_confirm(), "grn", UIKit.BUILD_H, 24))
 
 func _clear_bar() -> void:
-	for c in build_bar.get_children():
-		build_bar.remove_child(c); c.queue_free()
+	for c in build_vb.get_children():
+		build_vb.remove_child(c); c.queue_free()
 
 func hide_build_bar() -> void:
 	build_bar.visible = false
+	bottom_pc.visible = true
 	_clear_bar()
 	ghost_info = null
+	call_deferred("_fit")
 
 # ---------- level select / win / lose ----------
 func show_levels() -> void:
@@ -773,11 +921,6 @@ func show_info(title: String, text: String) -> void:
 
 func is_blocking(pos: Vector2) -> bool:
 	if modal_bg.visible: return true
-	for c in [panel, build_bar]:
-		if c.visible and c.get_global_rect().has_point(pos):
-			if c == build_bar:
-				for b in build_bar.get_children():
-					if b.get_global_rect().has_point(pos): return true
-				return false
-			return true
+	for c in [panel, build_bar, top_pc, bottom_pc]:
+		if c.visible and c.get_global_rect().has_point(pos): return true
 	return false

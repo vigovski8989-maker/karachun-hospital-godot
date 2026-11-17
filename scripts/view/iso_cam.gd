@@ -24,6 +24,8 @@ var shake_t = 0.0
 
 func _ready() -> void:
 	projection = PROJECTION_ORTHOGONAL
+	# portrait phones: the ortho size is the visible WIDTH (in metres), the tall screen shows more depth
+	keep_aspect = Camera3D.KEEP_WIDTH
 	near = 0.1
 	far = 200.0
 	apply()
@@ -50,7 +52,7 @@ func _process(delta: float) -> void:
 
 func _pan(rel: Vector2) -> void:
 	var vp = get_viewport().get_visible_rect().size
-	var wpp = size / vp.y
+	var wpp = size / vp.x
 	var right = global_transform.basis.x
 	var fwd = Vector3(-dir.x, 0, -dir.z).normalized()
 	var pitch_k = 1.0 / dir.y * dir.length() if false else 1.0 / sin(asin(dir.y))
