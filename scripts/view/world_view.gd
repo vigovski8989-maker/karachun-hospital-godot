@@ -111,17 +111,41 @@ func rebuild() -> void:
 		if r.get("par"): continue
 		var lab2 = Label3D.new()
 		lab2.text = sim.drm(r.type).name
-		lab2.font_size = 48; lab2.pixel_size = 0.008; lab2.billboard = BaseMaterial3D.BILLBOARD_ENABLED
-		lab2.outline_size = 8
-		lab2.position = Vector3(r.x + r.w / 2.0, WorldBuild.HB + 0.5, r.y + 0.5)
+		lab2.font_size = 40; lab2.pixel_size = 0.006; lab2.billboard = BaseMaterial3D.BILLBOARD_ENABLED
+		lab2.outline_size = 10
+		lab2.font = UIKit.font_800
+		lab2.modulate = Color(1, 1, 1, 0.92)
+		lab2.width = 400; lab2.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+		# centre of the room, just above the wall tops (not on the back wall where it ran off-screen)
+		lab2.position = Vector3(r.x + r.w / 2.0, WorldBuild.HB + 0.15, r.y + r.h / 2.0)
 		dyn_root.add_child(lab2)
 		labels[r.id] = lab2
+		if r.type == "lab": _lab_stool(r)
+	_lab_zoom = -1.0
 	var ent = Label3D.new()
 	ent.text = "🏥 Больница «Карачун»"
 	ent.font_size = 48; ent.pixel_size = 0.008; ent.billboard = BaseMaterial3D.BILLBOARD_ENABLED; ent.outline_size = 12
 	ent.modulate = Color(1, 0.95, 0.7)
 	ent.position = Vector3(S.ent.x + 0.5, 2.4, H + 0.8)
+	ent.font = UIKit.font_800
 	dyn_root.add_child(ent)
+	labels["ent"] = ent
+
+func _lab_stool(r) -> void:
+	var sp = sim.spotPatient(r)
+	var yw = CharPuppet.dir_yaw(sp.get("dir"))
+	var f = Vector3(sin(yw), 0, cos(yw))
+	var c = Vector3(float(sp.x) + .5, 0, float(sp.y) + .5) - f * 0.14
+	var n = Node3D.new(); n.position = c
+	var mt = Geo.mat(Color(0.25, 0.27, 0.3), 0.4, 0.5)
+	var seat = Geo.mat(Color(0.2, 0.45, 0.75), 0.55)
+	var cy = CylinderMesh.new(); cy.top_radius = .19; cy.bottom_radius = .19; cy.height = .06; cy.radial_segments = 16
+	Geo.mi(n, cy, seat, Vector3(0, .47, 0), 0.0)
+	var lg = CylinderMesh.new(); lg.top_radius = .03; lg.bottom_radius = .03; lg.height = .44; lg.radial_segments = 8
+	Geo.mi(n, lg, mt, Vector3(0, .23, 0), 0.0)
+	var bs = CylinderMesh.new(); bs.top_radius = .17; bs.bottom_radius = .2; bs.height = .03; bs.radial_segments = 16
+	Geo.mi(n, bs, mt, Vector3(0, .015, 0), 0.0)
+	dyn_root.add_child(n)
 
 func _sync_doors(_gdt: float) -> void:
 	if wb == null: return
@@ -151,7 +175,11 @@ func _fill_mm(mmi: MultiMeshInstance3D, arr: Array) -> void:
 
 const BIG := ["balloonhead", "cloudhead", "statichair", "flathead"]
 const INV := ["lostshadow"]
-const MUM := ["pixel", "spotty", "zebra", "glowskin", "soapsneeze"]
+# 45.x drew these skin diseases with a bandaged "mummy" body (looked like an untextured mannequin);
+# 0.9.2 shows them as a normal patient with the symptom painted on the skin instead
+const MUM := []
+const DIS_ICON := {"pixel": "👾", "yawn": "🥱", "nosewhistle": "🎶", "giggles": "🤭", "grumpliver": "😤", "squareeyes": "🔲", "balloonhead": "🎈", "echo": "🔁", "rubberknee": "🦘", "puffytoes": "🦶", "selfiesyndrome": "🤳", "blinknose": "🔴", "drumheart": "🥁", "soapsneeze": "🫧", "jellyspine": "🍮", "lostshadow": "👻", "fizzyblood": "🥤", "twistedtongue": "👅", "cloudhead": "☁️", "hiccupclock": "⏰", "glowskin": "✨", "spotty": "🍄", "zebra": "🦓", "tail": "🐒", "flathead": "🥞", "deflated": "🫠", "statichair": "⚡", "lowbattery": "🪫", "bluescreen": "💻", "looping": "🔂", "lazyheart": "🫀", "wanderliver": "🧳", "chattykidney": "💬", "bagpipelungs": "🎵", "gourmetstomach": "🦪", "lovesickheart": "💘", "sneezykidney": "🤧"}
+const SHOES := [Color(0.13, 0.11, 0.1), Color(0.36, 0.22, 0.13), Color(0.93, 0.93, 0.92), Color(0.18, 0.3, 0.55), Color(0.55, 0.12, 0.12), Color(0.5, 0.45, 0.4)]
 const ROCK := ["echo", "giggles", "drumheart", "looping", "bagpipelungs", "hiccupclock"]
 const STAFF_GLB := {"doctor": "doctor", "nurse": "nurse", "receptionist": "receptionist", "handyman": "orderly", "orderly": "orderly"}
 const STAFF_TINT := {"handyman": Color(0.3, 0.45, 0.85), "orderly": null}
@@ -161,22 +189,40 @@ func _make_puppet(e: Dictionary, staff: bool) -> CharPuppet:
 	chars_root.add_child(p)
 	var glb = "patient_a"
 	var tint = null
+	var dis_look = ""
 	if staff:
 		glb = STAFF_GLB.get(e.type, "patient_a")
 		tint = STAFF_TINT.get(e.type)
 		p.kind = e.type
 	else:
-		var dis: String = e.get("dis", "")
+		var dis: String = "" if e.get("healed") else str(e.get("dis", ""))
+		dis_look = dis
 		if dis in BIG: glb = "bighead"
 		elif dis in INV: glb = "invisible"
 		elif dis in MUM: glb = "mummy"
 		elif dis in ROCK: glb = "rocker"
-		tint = Color.from_hsv(float(e.get("hue", 0)) / 360.0, 0.45, 0.85) if glb == "patient_a" else null
+		tint = Color.from_hsv(_shirt_hue(float(e.get("hue", 0))) / 360.0, 0.6, 0.85) if glb == "patient_a" else null
 		if e.get("vip"): tint = Color(0.15, 0.15, 0.18)
 		p.kind = "patient"
 	p.is_staff = staff
 	p.eid = e.id
 	p.setup("res://assets/chars/%s.glb" % glb, tint)
+	var hsh: int = absi(hash(int(e.id) * 7919 + 13))
+	var tone: Color = CharPuppet.SKIN_TONES[hsh % CharPuppet.SKIN_TONES.size()]
+	var shoe: Color = SHOES[(hsh / 7) % SHOES.size()]
+	if staff:
+		shoe = Color(0.95, 0.95, 0.95) if e.type == "nurse" else (Color(0.1, 0.1, 0.1) if e.type in ["doctor", "receptionist"] else Color(0.2, 0.2, 0.22))
+	p.set_look(tone, shoe, dis_look)
+	p.healed_look = (e.get("healed") == true)
+	if not staff and dis_look != "" and DIS_ICON.has(dis_look):
+		var bl = Label3D.new()
+		bl.text = DIS_ICON[dis_look]
+		bl.font = UIKit.font_800 if UIKit.font_800 else null
+		bl.font_size = 64; bl.pixel_size = 0.0034; bl.outline_size = 0
+		bl.billboard = BaseMaterial3D.BILLBOARD_ENABLED
+		bl.position = Vector3(0, 2.05, 0)
+		p.add_child(bl)
+		p.badge = bl
 	if glb == "invisible":
 		for mi in p.find_children("*", "MeshInstance3D", true, false):
 			if not "Clothes" in str(mi.name): mi.visible = false
@@ -187,6 +233,10 @@ func _make_puppet(e: Dictionary, staff: bool) -> CharPuppet:
 	if staff and e.type == "nurse":
 		p.attach_prop("cap", _nurse_cap(), "Head", Vector3(0, 0.22, 0.0))
 	return p
+
+static func _shirt_hue(h: float) -> float:
+	# skip skin-like browns/oranges so a shirt never reads as a bare torso
+	return fmod(h + 160.0, 360.0) if h > 8.0 and h < 50.0 else h
 
 func _glasses() -> Node3D:
 	var n = Node3D.new()
@@ -227,6 +277,9 @@ func _sync_chars(gdt: float) -> void:
 	var focus = Vector3.ZERO
 	if cam and cam.has_method("get_focus"): focus = cam.get_focus()
 	var zoom: float = cam.size if cam else 20.0
+	var vs = get_viewport().get_visible_rect().size
+	_tall = maxf(1.0, vs.y / maxf(1.0, vs.x)) if cam and cam.keep_aspect == Camera3D.KEEP_WIDTH else 1.0
+	_scale_labels(zoom)
 	for e in sim.S.pats:
 		_sync_one(e, false, gdt, seen, focus, zoom)
 	for e in sim.S.staff:
@@ -239,12 +292,12 @@ func _sync_chars(gdt: float) -> void:
 
 # visual-only personal space: standing/walking bodies closer than MIN_SEP are eased apart (sim positions untouched),
 # so two people never render inside each other at doors / queues
-const MIN_SEP := 0.46
+const MIN_SEP := 0.58
 func _separate(gdt: float) -> void:
 	var arr = []
 	for id in puppets:
 		var p: CharPuppet = puppets[id]
-		if p.visible and p.lie_k < 0.05 and not p.seated: arr.append(p)
+		if p.visible and p.lie_k < 0.05: arr.append(p)
 	var push = {}
 	for i in arr.size():
 		var a: CharPuppet = arr[i]
@@ -256,23 +309,45 @@ func _separate(gdt: float) -> void:
 			var d = sqrt(dx * dx + dz * dz)
 			if d >= MIN_SEP: continue
 			var n = Vector3(dx, 0, dz) / d if d > 0.001 else Vector3(1, 0, 0).rotated(Vector3.UP, float(i * 7 + j))
+			if a.seated and b.seated: continue
 			var k = (MIN_SEP - d) * 0.5
-			push[a] = push.get(a, Vector3.ZERO) - n * k
-			push[b] = push.get(b, Vector3.ZERO) + n * k
+			# seated / working-at-desk bodies don't move; the standing one steps aside fully
+			var ka = 0.0 if a.seated else (k * 2.0 if b.seated else k)
+			var kb = 0.0 if b.seated else (k * 2.0 if a.seated else k)
+			push[a] = push.get(a, Vector3.ZERO) - n * ka
+			push[b] = push.get(b, Vector3.ZERO) + n * kb
 	for p in arr:
+		if p.seated: continue
 		var tgt: Vector3 = push.get(p, Vector3.ZERO)
 		p.sep_off = p.sep_off.lerp(tgt, minf(1.0, 0.25 + gdt * 6.0))
 		p.position += p.sep_off
+
+var _tall = 1.0
+var _lab_zoom = -1.0
+func _scale_labels(zoom: float) -> void:
+	# room names keep a readable, constant on-screen size (portrait: zoom = visible width in metres)
+	if absf(zoom - _lab_zoom) < 0.05: return
+	_lab_zoom = zoom
+	var ps = clampf(zoom * 0.0007, 0.002, 0.02)
+	for k in labels:
+		var l = labels[k]
+		if is_instance_valid(l): l.pixel_size = ps
 
 func _sync_one(e: Dictionary, staff: bool, gdt: float, seen: Dictionary, focus: Vector3, zoom: float) -> void:
 	var id: int = e.id
 	seen[id] = true
 	var p: CharPuppet = puppets.get(id)
+	if p != null and not staff and (e.get("healed") == true) != p.healed_look:
+		# healed: back to a plain patient (no symptoms), as 45.x mkPat(p.healed)
+		var pos = p.position; var ry = p.rotation.y
+		p.queue_free(); puppets.erase(id)
+		p = _make_puppet(e, staff); puppets[id] = p
+		p.position = pos; p.rotation.y = ry
 	if p == null:
 		p = _make_puppet(e, staff)
 		puppets[id] = p
 	var d = Vector2(float(e.x) - focus.x, float(e.y) - focus.z).length()
-	var vis = d < zoom * 1.6
+	var vis = d < zoom * 1.6 * _tall
 	p.visible = vis
 	p.lod_every = 1 if d < zoom * 0.7 else (2 if vis else 8)
 	p.sync(sim, e, gdt, self)

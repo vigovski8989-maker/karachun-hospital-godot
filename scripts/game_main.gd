@@ -272,6 +272,8 @@ func _dbg_ui() -> void:
 			"win": hud.show_win()
 			"lose": hud.show_lose("Репутация упала ниже допустимой.")
 			"ghost": start_room(a[1])
+			"ok":
+				ghost_ok(); print("GHOST after ok: ", ghost, " rooms ", sim.S.rooms.size())
 			"item": pick_item(a[1])
 			"pat":
 				for p in sim.S.pats:
@@ -446,8 +448,8 @@ func ghost_ok() -> void:
 	if ghost == null: return
 	var r = sim.buildRoom(ghost)
 	if r is String:
-		sim.msg("Нельзя: " + r); snd("bad"); return
-	if r == null: return
+		snd("bad"); return
+	# built (v25 buildRoom returns null on success): leave build mode, no new ghost
 	snd("build")
 	ghost_cancel()
 func ghost_cancel() -> void:

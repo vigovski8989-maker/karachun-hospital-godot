@@ -60,6 +60,7 @@ func setup(glb: String, tint = null, scale_k := 1.0) -> void:
 		head_idx = skel.find_bone("Head")
 		hip_idx = skel.find_bone("pelvis")
 		if hip_idx >= 0: pelvis_h = skel.get_bone_global_rest(hip_idx).origin.y * scale_k
+		thigh_l = skel.find_bone("thigh_l"); thigh_r = skel.find_bone("thigh_r")
 		for c in skel.get_children():
 			if c is MeshInstance3D:
 				c.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_ON
@@ -70,7 +71,126 @@ func setup(glb: String, tint = null, scale_k := 1.0) -> void:
 							var d: StandardMaterial3D = mat.duplicate()
 							d.albedo_color = tint
 							c.set_surface_override_material(si, d)
+	# glTF export left the skin at metallic=1 -> almost black diffuse ("smoked skin"); make it a normal dielectric
+	for mi in model.find_children("*", "MeshInstance3D", true, false):
+		for si in mi.mesh.get_surface_count():
+			var m = mi.get_surface_override_material(si)
+			if m == null: m = mi.mesh.surface_get_material(si)
+			if m is StandardMaterial3D and m.metallic > 0.5:
+				var d: StandardMaterial3D = m.duplicate()
+				d.metallic = 0.0; d.roughness = 0.8; d.metallic_specular = 0.28
+				mi.set_surface_override_material(si, d)
+				skin_mats.append(d)
 	play("Idle_Loop")
+
+var skin_mats = []
+var healed_look = false
+var badge: Label3D
+# multipliers on the UBC tan skin texture (>1 = lighter): fair, light, light-olive, tan, brown, dark
+const SKIN_TONES := [Color(1.45, 1.32, 1.2), Color(1.35, 1.2, 1.08), Color(1.22, 1.12, 0.98), Color(1.08, 1.0, 0.92), Color(0.82, 0.7, 0.6), Color(0.58, 0.47, 0.4), Color(1.4, 1.25, 1.15)]
+static var _pat_tex = {}
+const PAT_TINT := {"spotty": Color(1.0, 0.7, 0.7), "pixel": Color(0.85, 0.7, 1.0), "zebra": Color(0.75, 0.75, 0.75), "soapsneeze": Color(0.9, 0.97, 1.0)}
+
+# per-person look: skin tone, shoes, and visible disease symptoms (view only)
+var dis_k = ""
+func set_look(tone: Color, shoe: Color, dis: String) -> void:
+	dis_k = dis
+	for m in skin_mats:
+		m.albedo_color = tone
+	if dis != "":
+		var pt = _pattern_tex(dis, skin_mats[0].albedo_texture if skin_mats.size() > 0 else null)
+		for m in skin_mats:
+			if pt: m.albedo_texture = pt
+			elif dis in PAT_TINT: m.albedo_color = tone * PAT_TINT[dis]
+			match dis:
+				"glowskin":
+					m.emission_enabled = true; m.emission = Color(0.75, 1.0, 0.35); m.emission_energy_multiplier = 0.55
+					m.albedo_color = Color(0.9, 1.0, 0.75)
+				"bluescreen": m.albedo_color = Color(0.45, 0.62, 1.0)
+				"lowbattery": m.albedo_color = tone.darkened(0.25) * Color(0.85, 0.9, 1.0)
+				"grumpliver", "lazyheart": m.albedo_color = tone * Color(1.0, 0.95, 0.7)
+				"fizzyblood", "drumheart", "lovesickheart": m.albedo_color = tone * Color(1.0, 0.86, 0.86)
+	_shoes(shoe)
+	if dis == "tail": _tail()
+
+func _shoes(col: Color) -> void:
+	if skel == null or skel.find_bone("foot_l") < 0: return
+	var mt = Geo.mat(col, 0.55)
+	var sole = Geo.mat(Color(0.12, 0.12, 0.12) if col.v > 0.6 else Color(0.9, 0.9, 0.88), 0.7)
+	for sd in ["l", "r"]:
+		var fi = skel.find_bone("foot_" + sd)
+		var bi = skel.find_bone("ball_" + sd)
+		var F = skel.get_bone_global_rest(fi)
+		var B = skel.get_bone_global_rest(bi)
+		# shoe boxes in skeleton (rest, standing) space -> bone-local
+		var xs = F.origin.x
+		var heel = Node3D.new()
+		var rear = Transform3D(Basis(), Vector3(xs, 0.055, (F.origin.z - 0.075 + B.origin.z + 0.01) / 2.0))
+		var lr = B.origin.z + 0.01 - (F.origin.z - 0.075)
+		var bx = Geo.box(heel, Vector3(0.115, 0.11, lr), mt, Vector3.ZERO, 0.03)
+		Geo.box(heel, Vector3(0.12, 0.025, lr + 0.01), sole, Vector3(0, -0.045, 0), 0.0)
+		var toe = Node3D.new()
+		var front = Transform3D(Basis(), Vector3(xs, 0.045, B.origin.z + 0.06))
+		Geo.box(toe, Vector3(0.11, 0.085, 0.11), mt, Vector3.ZERO, 0.035)
+		Geo.box(toe, Vector3(0.115, 0.025, 0.12), sole, Vector3(0, -0.032, 0), 0.0)
+		_attach_rest("shoe_h_" + sd, heel, "foot_" + sd, F.affine_inverse() * rear)
+		_attach_rest("shoe_t_" + sd, toe, "ball_" + sd, B.affine_inverse() * front)
+
+func _attach_rest(nm: String, node: Node3D, bone: String, xf: Transform3D) -> void:
+	if props.has(nm): return
+	var ba = BoneAttachment3D.new()
+	ba.bone_name = bone
+	skel.add_child(ba)
+	node.transform = xf
+	ba.add_child(node)
+	props[nm] = ba
+
+func _tail() -> void:
+	if skel == null: return
+	var n = Node3D.new()
+	var m = Geo.mat(Color(0.55, 0.38, 0.24), 0.8)
+	for i in 5:
+		var c = CylinderMesh.new(); c.top_radius = 0.035 - i * 0.004; c.bottom_radius = 0.04 - i * 0.004; c.height = 0.14; c.radial_segments = 8
+		var mi = Geo.mi(n, c, m, Vector3(0, -0.02 - i * 0.07, -0.12 - i * 0.05), 0.0, false)
+		mi.rotation.x = -0.6 - i * 0.15
+	var P = skel.get_bone_global_rest(skel.find_bone("pelvis"))
+	_attach_rest("tail", n, "pelvis", P.affine_inverse() * Transform3D(Basis(), P.origin))
+	tail_node = n
+var tail_node: Node3D
+
+# skin pattern for skin diseases (spots / pixels / stripes), drawn once into a copy of the skin texture
+func _pattern_tex(dis: String, base: Texture2D) -> Texture2D:
+	if not dis in ["spotty", "pixel", "zebra", "soapsneeze"] or base == null: return null
+	if _pat_tex.has(dis): return _pat_tex[dis]
+	var img: Image = base.get_image()
+	if img == null: return null
+	if img.is_compressed(): img.decompress()
+	if img.is_compressed(): return null   # no CPU decoder for this VRAM format in the export template -> tint fallback
+	img.convert(Image.FORMAT_RGBA8)
+	img.resize(512, 512, Image.INTERPOLATE_BILINEAR)
+	var rng = RandomNumberGenerator.new(); rng.seed = hash(dis)
+	match dis:
+		"spotty":
+			for i in 420:
+				var cx = rng.randi_range(0, 511); var cy = rng.randi_range(0, 511); var r = rng.randi_range(4, 8)
+				var c = Color(0.85, 0.08, 0.1)
+				img.fill_rect(Rect2i(cx - r, cy - r / 2, r * 2, r), c)
+				img.fill_rect(Rect2i(cx - r / 2, cy - r, r, r * 2), c)
+		"pixel":
+			var pal = [Color(0.55, 0.2, 0.85), Color(0.1, 0.75, 0.55), Color(0.95, 0.4, 0.7), Color(0.2, 0.45, 0.95)]
+			for i in 700:
+				var cx = rng.randi_range(0, 31) * 16; var cy = rng.randi_range(0, 31) * 16
+				img.fill_rect(Rect2i(cx, cy, 14, 14), pal[i % pal.size()])
+		"zebra":
+			for y in range(0, 512, 26):
+				img.fill_rect(Rect2i(0, y, 512, 11), Color(0.1, 0.09, 0.09))
+		"soapsneeze":
+			for i in 260:
+				var cx = rng.randi_range(0, 511); var cy = rng.randi_range(0, 511)
+				img.fill_rect(Rect2i(cx - 3, cy - 3, 7, 7), Color(0.75, 0.9, 1.0))
+	var t = ImageTexture.create_from_image(img)
+	_pat_tex[dis] = t
+	return t
 
 func anim_name(n: String) -> String:
 	if ap.has_animation(n): return n
@@ -130,6 +250,118 @@ func _ticket() -> Node3D:
 		ticket.visible = false
 	return ticket
 var hose: MeshInstance3D
+const SIT_F := {"bench": .14, "chair": .1, "sofa": .26, "wc": .1, "elchair": .08, "chair_office": .1, "stool": .1}
+const STAND_F := {"bench": .68, "chair": .62, "sofa": .7, "wc": .55, "elchair": .64, "chair_office": .62, "stool": .62}
+const SEAT_H := {"sofa": .52, "bench": .46, "wc": .5, "elchair": .50, "chair": .50, "chair_office": .50, "stool": .5}
+var _vs_ref = null
+var _vs_from = Vector3.ZERO
+var _vs_via = null
+var _seat_w = 0.0
+var _seat_h = 0.5
+var _gy = 0.0
+var thigh_l = -1
+var thigh_r = -1
+var lab_sit = false
+static var _bed_sides = {}
+
+static func dir_yaw(d) -> float:
+	match int(d if d != null else 1):
+		0: return PI / 2
+		1: return 0.0
+		2: return -PI / 2
+		_: return PI
+
+func _clip_len(n: String) -> float:
+	var a = ap.get_animation(anim_name(n))
+	return a.length if a else 1.0
+
+static func _polyline(pts: Array, t: float) -> Vector3:
+	var tot = 0.0
+	for i in range(1, pts.size()): tot += pts[i - 1].distance_to(pts[i])
+	if tot < 1e-4: return pts[pts.size() - 1]
+	var u = t * tot
+	for i in range(1, pts.size()):
+		var d = pts[i - 1].distance_to(pts[i])
+		if u <= d or i == pts.size() - 1: return pts[i - 1].lerp(pts[i], clampf(u / maxf(d, 1e-4), 0, 1))
+		u -= d
+	return pts[pts.size() - 1]
+
+func _seat_kind(sim, e: Dictionary, sp, pose: String) -> String:
+	if pose == "wc" or sp.get("seat") == "wc": return "wc"
+	if sp.get("bench") or sp.get("seat") == "bench": return "bench"
+	var r = sim.room_by_id(e.get("room"))
+	if r and r.get("it"):
+		for t in r.it:
+			if int(t.x) == int(sp.x) and int(t.y) == int(sp.y):
+				var kk = str(t.get("k", ""))
+				if "elchair" in kk: return "elchair"
+				if "sofa" in kk: return "sofa"
+				if "chair_office" in kk: return "chair_office"
+				if "chair" in kk: return "chair"
+	return str(sp.get("seat")) if sp.get("seat") else "chair"
+
+# which side of the bed has two free tiles to stand on (45.x v43BedSide)
+func _bed_side(sim, b) -> int:
+	var t = b.t
+	var key = str(t.get_instance_id() if t is Object else hash(t))
+	if _bed_sides.has(key): return _bed_sides[key]
+	var r = null
+	for rr in sim.S.rooms:
+		if rr.get("it") and rr.it.has(t): r = rr; break
+	var sd = 0
+	if r:
+		var fp = t.get("fp") if t.get("fp") else sim.fpOf(t.k)
+		var I = sim.inner(r)
+		var az = int(fp[1]) >= int(fp[0])
+		var blk = {}
+		for q in r.it:
+			if q != t:
+				for tt in sim.tilesOf(q.x, q.y, q.get("fp") if q.get("fp") else sim.fpOf(q.k)): blk[str(tt[0]) + "," + str(tt[1])] = true
+		var ok = func(sg: int) -> bool:
+			var ts = [[t.x - 1 if sg < 0 else t.x + fp[0], t.y], [t.x - 1 if sg < 0 else t.x + fp[0], t.y + fp[1] - 1]] if az else [[t.x, t.y - 1 if sg < 0 else t.y + fp[1]], [t.x + fp[0] - 1, t.y - 1 if sg < 0 else t.y + fp[1]]]
+			for q in ts:
+				if not (q[0] >= I.x and q[1] >= I.y and q[0] < I.x + I.w and q[1] < I.y + I.h) or blk.has(str(q[0]) + "," + str(q[1])): return false
+			return true
+		var cx = I.x + I.w / 2.0
+		var cy = I.y + I.h / 2.0
+		var pref = (1 if cx >= t.x + fp[0] / 2.0 else -1) if az else (1 if cy >= t.y + fp[1] / 2.0 else -1)
+		sd = pref if ok.call(pref) else (-pref if ok.call(-pref) else 0)
+	_bed_sides[key] = sd
+	return sd
+
+func _bed_pose(sim, b, sp, L: float, cur: Vector3) -> Dictionary:
+	var t = b.t
+	var fp = t.get("fp") if t.get("fp") else sim.fpOf(t.k)
+	var az = int(fp[1]) >= int(fp[0])
+	var sd = _bed_side(sim, b)
+	var C = Vector3(t.x + fp[0] / 2.0, 0, t.y + fp[1] / 2.0)
+	var sv = Vector3(sd, 0, 0) if az else Vector3(0, 0, sd)
+	var P0 = Vector3(float(sp.x) + .5, 0, float(sp.y) + .5)
+	var Ss = C + sv * .95
+	var E = C + sv * .4
+	var K = Vector3(Ss.x, 0, P0.z) if az else Vector3(P0.x, 0, Ss.z)
+	var yaw_out = atan2(sv.x, sv.z)
+	var Y0 = b.piv.rotation.y
+	var o = {"pos": cur, "yaw": yaw_out, "anim": "Idle", "spd": 1.0, "lie": 0.0, "w": 0.0}
+	if L < .3:
+		var a = L / .3
+		o.pos = _polyline([P0, K, Ss], a)
+		var dv = o.pos - position
+		if a < .92:
+			o.anim = "Walk"; o.spd = .8
+			if Vector2(dv.x, dv.z).length() > .002: o.yaw = atan2(dv.x, dv.z)
+	elif L < .55:
+		var k = ease01((L - .3) / .25)
+		o.pos = Ss.lerp(E, k); o.anim = "Sitting_Enter" if _vs_ref and _vs_ref.ph == "down" else "Sitting_Exit"
+		o.spd = 1.0; o.w = k
+	else:
+		var u = ease01((L - .55) / .45)
+		o.pos = E.lerp(C, u)
+		o.yaw = lerp_angle(yaw_out, Y0, u)
+		o.lie = u; o.w = 1.0
+		o.anim = "Sitting_Idle" if u < .5 else "Idle"
+		o.spd = 1.0 if u < .5 else 0.06
+	return o
 var pelvis_h = 0.95
 var death_hold = false
 var slide = 0.0
@@ -179,8 +411,10 @@ func sync(sim, e: Dictionary, gdt: float, view) -> void:
 	var show_ticket = false
 	var want_mask = false
 	var hose_to = null
-	model.position = Vector3.ZERO
+	var show_tube = false
+	reach_r = Vector3.INF; reach_world = Vector3.INF; reach_w = 0.0
 	seated = vs != null
+	lab_sit = false
 	shock_t = maxf(0.0, shock_t - gdt)
 	if st == "dead":
 		anim = "Death01"
@@ -191,11 +425,18 @@ func sync(sim, e: Dictionary, gdt: float, view) -> void:
 		var T: float = SEAT_T.get(pose, 0.9)
 		var k: float = clampf(float(vs.t) / T, 0.0, 1.0)
 		var sp = vs.get("sp")
+		if not is_same(vs, _vs_ref):
+			_vs_ref = vs; _vs_from = position - sep_off; _vs_via = null
 		if pose == "lie":
 			var b = _bed_of(view, sp)
 			var lk = 1.0 if vs.ph == "sat" else (k if vs.ph == "down" else 1.0 - k)
-			if b:
-				var bk = str(b.t.get("k"))
+			var bk = str(b.t.get("k")) if b else ""
+			if b and bk.begins_with("bed") and _bed_side(sim, b) != 0:
+				# v43 bed: walk to the bed side, sit on the edge (back to the bed), swing in and lie down; reverse to get up
+				var r = _bed_pose(sim, b, sp, lk, tgt)
+				tgt = r.pos; yaw = r.yaw; anim = r.anim; spd = r.spd; want_lie = r.lie; lie_h = MATT_H.bed
+				_seat_w = r.w; _seat_h = .56
+			elif b:
 				lie_h = MATT_H.get(bk, 0.61)
 				var bc = b.piv.position
 				var byaw = b.piv.rotation.y
@@ -211,16 +452,51 @@ func sync(sim, e: Dictionary, gdt: float, view) -> void:
 					tgt -= fwd * 0.75 * kk
 					view.set_room_k(e.get("room"), kk, true)
 				else: sat0 = -1.0
-			want_lie = ease01((lk - 0.25) / 0.75)
-			anim = "Sitting_Idle" if want_lie < 0.5 else ("Sitting_Enter" if vs.ph == "down" else "Sitting_Exit")
-			if want_lie > 0.5: anim = "Idle"; spd = 0.06   # near-still body on the mattress (slow breathing sway only)
+				# 45.x: straight lie-back onto the table from standing (never "sitting on air" beside it)
+				want_lie = ease01(lk * 1.4)
+				anim = "Idle"; spd = 0.35
+				_seat_w = 0.0
+			else:
+				_seat_w = 0.0
+				want_lie = ease01(lk * 1.4); anim = "Idle"; spd = 0.35
 		else:
-			anim = "Sitting_Idle" if vs.ph == "sat" else ("Sitting_Enter" if vs.ph == "down" else "Sitting_Exit")
-			if vs.ph != "sat": spd = 1.3 / T
-			if vs.ph == "sat" and (st == "treat" or (is_staff and st == "work" and _patient_in_room(sim, e))): anim = "Sitting_Talking"
-			# seated slightly back into the chair (seat frame)
-			var bk2 = (0.34 if kind == "receptionist" else 0.12) * (1.0 if vs.ph == "sat" else k if vs.ph == "down" else 1.0 - k)
-			tgt += Vector3(sin(yaw), 0, cos(yaw)) * -bk2
+			# v43 natural sitting: walk to a point in front of the seat, turn, lower onto the cushion (and back)
+			var sk = _seat_kind(sim, e, sp, pose)
+			var syaw = dir_yaw(sp.get("dir") if sp.get("dir") != null else e.get("dir"))
+			var f = Vector3(sin(syaw), 0, cos(syaw))
+			var A = Vector3(float(sp.x) + .5, 0, float(sp.y) + .5)
+			var M = A + f * float(SIT_F.get(sk, .2))
+			var SD = float(STAND_F.get(sk, .65))
+			var Sx = A + f * SD
+			_seat_h = float(SEAT_H.get(sk, .5))
+			if vs.ph == "down":
+				if _vs_via == null:
+					var along = (_vs_from - A).dot(f)
+					_vs_via = (A + Vector3(-f.z, 0, f.x) * 1.05 + f * SD) if along < SD * .45 and (_vs_from - Sx).length() > .3 else Vector3.INF
+				if k < .42:
+					var a2 = ease01(k / .42)
+					var pts = [_vs_from, Sx] if _vs_via == Vector3.INF else [_vs_from, _vs_via, Sx]
+					tgt = _polyline(pts, a2)
+					var dv = tgt - position
+					var walking = (tgt - Sx).length() > .05
+					anim = "Walk" if walking else "Idle"
+					spd = 0.8
+					yaw = atan2(dv.x, dv.z) if walking and Vector2(dv.x, dv.z).length() > .002 else lerp_angle(rotation.y, syaw, minf(1.0, gdt * 10.0))
+					_seat_w = 0.0
+				else:
+					var b2 = ease01((k - .42) / .58)
+					tgt = Sx.lerp(M, b2); yaw = syaw
+					anim = "Sitting_Enter"; spd = _clip_len("Sitting_Enter") / maxf(.2, T * .58)
+					_seat_w = b2
+			elif vs.ph == "up":
+				yaw = syaw
+				anim = "Sitting_Exit"; spd = _clip_len("Sitting_Exit") / maxf(.2, T * .8)
+				tgt = M if k < .3 else M.lerp(Sx, ease01((k - .3) / .45))
+				_seat_w = 1.0 - ease01(k / .75)
+			else:
+				tgt = M; yaw = syaw; _seat_w = 1.0
+				anim = "Sitting_Idle"
+				if st == "treat" or (is_staff and st == "work" and _patient_in_room(sim, e)): anim = "Sitting_Talking"
 	elif e.get("oa") or e.get("wash"):
 		anim = "Interact"
 	elif moving:
@@ -261,6 +537,13 @@ func sync(sim, e: Dictionary, gdt: float, view) -> void:
 					# explain -> operate the console/machine -> report back
 					anim = "Interact" if qq > .18 and qq < .82 else "Idle_Talking"
 					spd = 0.7
+				"lab":
+					anim = "Interact" if qq > .2 and qq < .85 else "Idle_Talking"
+					spd = 0.6
+					show_tube = qq > .3 and qq < .9
+					if pv and qq > .22 and qq < .82:
+						reach_world = pv.hand_world("hand_r") + Vector3(0, .06, 0)
+						reach_w = ease01((qq - .22) / .1) * (1.0 - ease01((qq - .74) / .08))
 				"ward", "icu", "derma":
 					anim = "Interact" if fmod(qq * 3.0, 1.0) < .35 else "Idle"
 				_:
@@ -301,6 +584,18 @@ func sync(sim, e: Dictionary, gdt: float, view) -> void:
 					anim = "Hit_Chest" if fmod(float(e.t), 1.2) < 0.33 else "Idle"
 				"psych":
 					anim = "Idle_Talking"
+				"lab":
+					# blood draw: sit on the stool, lay the right arm on the counter, nurse takes blood from the vein
+					lab_sit = true; _seat_h = .5
+					var fl = Vector3(sin(yaw), 0, cos(yaw))
+					if q2 < .12:
+						_seat_w = ease01(q2 / .12); anim = "Sitting_Enter"; spd = 1.3
+					elif q2 > .9:
+						_seat_w = 1.0 - ease01((q2 - .9) / .1); anim = "Sitting_Exit"; spd = 1.3
+					else:
+						_seat_w = 1.0; anim = "Sitting_Idle"
+						reach_r = Vector3(-0.1, 0.92, 0.62); reach_w = ease01((q2 - .14) / .08) * (1.0 - ease01((q2 - .82) / .06))
+					tgt += fl * (.1 * _seat_w)
 				"reception":
 					# ticket hand-off: reach over the counter at q .45-.7, ticket in hand afterwards
 					if q2 > .45 and q2 < .7: anim = "Interact"
@@ -329,14 +624,28 @@ func sync(sim, e: Dictionary, gdt: float, view) -> void:
 			if dg.length() > 0.2: yaw = lerp_angle(rotation.y, atan2(dg.x, dg.z), minf(1.0, gdt * 6.0))
 	# lie blend: rotate the whole model around X onto the mattress (no lie clip in UAL1); pelvis over bed centre
 	lie_k = want_lie if absf(want_lie - lie_k) < 0.02 else lerpf(lie_k, want_lie, minf(1.0, gdt * 6.0 + 0.0001))
+	if not seated and not lab_sit: _seat_w = 0.0
+	# seat height (45.x legs()): lift/lower the body so the hips land on the real cushion height
+	var gy_want = 0.0
+	if _seat_w > 0.001 and thigh_l >= 0:
+		var ty = (skel.get_bone_global_pose(thigh_l).origin.y + skel.get_bone_global_pose(thigh_r).origin.y) * 0.5 * model.scale.y
+		gy_want = clampf((_seat_h + .08 - ty) * _seat_w, -.3, .3)
+	_gy = lerpf(_gy, gy_want, minf(1.0, gdt * 12.0 + 0.0001))
 	if lie_k > 0.001:
 		model.rotation.x = -lie_k * PI / 2.0
-		model.position = Vector3(0, lie_k * (lie_h + 0.1), lie_k * pelvis_h * 0.9)
+		model.position = Vector3(0, _gy * (1.0 - lie_k) + lie_k * (lie_h + 0.1), lie_k * pelvis_h * 0.9)
 	else:
 		model.rotation.x = 0.0
+		model.position = Vector3(0, _gy, 0)
+	if dis_k == "rubberknee" and moving and lie_k < .05: model.position.y += absf(sin(Time.get_ticks_msec() * .009)) * .1
+	if dis_k == "jellyspine" and lie_k < .05: model.rotation.z = sin(Time.get_ticks_msec() * .006) * .07
+	if badge:
+		badge.visible = st != "dead"
+		badge.global_position = head_world() + Vector3(0, .42, 0)
 	position = tgt
 	rotation.y = yaw
 	if show_pill or pill: _pill().visible = show_pill
+	if show_tube or tube: _tube().visible = show_tube
 	if want_mask or mask: _mask().visible = want_mask
 	if show_ticket or ticket: _ticket().visible = show_ticket or (ticket != null and ticket.visible and st != "treat" and st != "dead" and st != "leave" and vs == null)
 	play(anim, spd)
@@ -345,6 +654,9 @@ func sync(sim, e: Dictionary, gdt: float, view) -> void:
 	if frame_i % lod_every == 0:
 		ap.advance(acc)
 		acc = 0.0
+		if reach_w > 0.01:
+			var tw = reach_world if reach_world != Vector3.INF else (global_transform * reach_r if reach_r != Vector3.INF else Vector3.INF)
+			if tw != Vector3.INF: _reach("upperarm_r", "hand_r", tw, reach_w)
 	# head scale (pump/inflate): applied after the animation pose
 	head_scale = lerpf(head_scale, hs_target, minf(1.0, gdt * 4.0 + 0.0001))
 	if skel and head_idx >= 0 and absf(head_scale - 1.0) > 0.005:
@@ -383,6 +695,44 @@ func _hose(mach) -> void:
 				for q in [a0, b0, a1, a1, b0, b1]: im.surface_add_vertex(q)
 		prev = ring
 	im.surface_end()
+
+var reach_r = Vector3.INF
+var reach_world = Vector3.INF
+var reach_w = 0.0
+var tube: Node3D
+func _tube() -> Node3D:
+	if tube == null:
+		tube = Node3D.new()
+		Geo.box(tube, Vector3(.025, .1, .025), Geo.mat(Color("#c81e2a"), .3), Vector3.ZERO, .008)
+		Geo.box(tube, Vector3(.03, .025, .03), Geo.mat(Color("#7a2be0"), .5), Vector3(0, .06, 0), .006)
+		attach_prop("tube", tube, "hand_r", Vector3(0, .08, .03))
+		tube.visible = false
+	return tube
+
+func hand_world(b: String) -> Vector3:
+	var i = skel.find_bone(b) if skel else -1
+	if i < 0: return global_position + Vector3(0, 1.0, 0)
+	return skel.global_transform * skel.get_bone_global_pose(i).origin
+
+# two-step aim: upper arm, then forearm, point at a world target (weight w) -> arm reaches out straight
+func _reach(upper: String, hand: String, target: Vector3, w: float) -> void:
+	if skel == null: return
+	var ui = skel.find_bone(upper)
+	var li = skel.find_bone(upper.replace("upperarm", "lowerarm"))
+	var hi = skel.find_bone(hand)
+	if ui < 0 or li < 0 or hi < 0: return
+	var T = skel.global_transform.affine_inverse() * target
+	_aim(ui, li, T, w)
+	_aim(li, hi, T, w)
+
+func _aim(bi: int, ci: int, T: Vector3, w: float) -> void:
+	var g: Transform3D = skel.get_bone_global_pose(bi)
+	var c: Transform3D = skel.get_bone_global_pose(ci)
+	var v1 = c.origin - g.origin
+	var v2 = T - g.origin
+	if v1.length() < 1e-4 or v2.length() < 1e-4: return
+	var q = Quaternion.IDENTITY.slerp(Quaternion(v1.normalized(), v2.normalized()), clampf(w, 0, 1))
+	skel.set_bone_global_pose(bi, Transform3D(Basis(q) * g.basis, g.origin))
 
 func _patient_in_room(sim, s: Dictionary) -> bool:
 	var r = sim.room_by_id(s.get("room"))
