@@ -64,12 +64,13 @@ func setup(glb: String, tint = null, scale_k := 1.0) -> void:
 		for c in skel.get_children():
 			if c is MeshInstance3D:
 				c.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_ON
-				if tint != null and str(c.name).to_lower().contains("cloth"):
+				if (tint != null or cloth_tex != null) and str(c.name).to_lower().contains("cloth"):
 					for si in c.mesh.get_surface_count():
 						var mat = c.mesh.surface_get_material(si)
 						if mat is StandardMaterial3D:
 							var d: StandardMaterial3D = mat.duplicate()
-							d.albedo_color = tint
+							if tint != null: d.albedo_color = tint
+							if cloth_tex != null: d.albedo_texture = cloth_tex
 							c.set_surface_override_material(si, d)
 	# glTF export left the skin at metallic=1 -> almost black diffuse ("smoked skin"); make it a normal dielectric
 	for mi in model.find_children("*", "MeshInstance3D", true, false):
@@ -173,7 +174,7 @@ func _sync_body() -> void:
 
 var skin_mats = []
 var healed_look = false
-var badge: Label3D
+var badge: Node3D
 # multipliers on the UBC tan skin texture (>1 = lighter): fair, light, light-olive, tan, brown, dark
 const SKIN_TONES := [Color(1.45, 1.32, 1.2), Color(1.35, 1.2, 1.08), Color(1.22, 1.12, 0.98), Color(1.08, 1.0, 0.92), Color(0.82, 0.7, 0.6), Color(0.58, 0.47, 0.4), Color(1.4, 1.25, 1.15)]
 static var _pat_tex = {}
@@ -181,6 +182,13 @@ const PAT_TINT := {"spotty": Color(1.0, 0.7, 0.7), "pixel": Color(0.85, 0.7, 1.0
 
 # per-person look: skin tone, shoes, and visible disease symptoms (view only)
 var dis_k = ""
+var cue_vs = null
+var rot_saved := {}
+var shape := Vector3.ONE   # per-person build (pelvis x/z scale)
+var stoop := 0.0
+var head_k := 1.0
+var cloth_tex: Texture2D
+var cue := {}   # DisCue state (0.9.6)
 func set_look(tone: Color, shoe: Color, dis: String) -> void:
 	dis_k = dis
 	for m in skin_mats:
@@ -201,6 +209,7 @@ func set_look(tone: Color, shoe: Color, dis: String) -> void:
 	_sync_body()
 	_shoes(shoe)
 	if dis == "tail": _tail()
+	if dis != "": DisCue.build(self, dis)
 
 func _shoes(col: Color) -> void:
 	var sole = Color(0.93, 0.92, 0.88) if col.v < 0.75 else Color(0.25, 0.24, 0.23)
@@ -483,7 +492,7 @@ var pelvis_h = 0.95
 var lie_direct = false
 var _last_free = null
 func is_fixed() -> bool:
-	return seated and (_seat_w > 0.3 or lie_k > 0.05)
+	return (seated or lab_sit) and (_seat_w > 0.3 or lie_k > 0.05)
 # view-only walk (lab nurse goes round the counter): sim position stays at the staff spot
 var vw_pos = null
 var vw_pts = []
@@ -646,7 +655,7 @@ func _place_lying() -> void:
 		chain = (n as Node3D).transform * chain if n is Node3D else chain
 		n = n.get_parent()
 	var pl: Vector3 = chain * skel.get_bone_global_pose(hip_idx).origin
-	var R = Basis(Vector3(1, 0, 0), -lie_k * PI / 2.0).scaled(model.scale)
+	var R = Basis(Vector3(1, 0, 0), -lie_k * PI / 2.0) * Basis.from_scale(model.scale)
 	var d_sit = Basis.from_scale(model.scale) * pl + Vector3(0, _gy, 0)
 	var d_lie = Vector3(0, _lie_h + 0.085, 0)
 	model.position = d_sit.lerp(d_lie, lie_k) - R * pl
@@ -690,6 +699,7 @@ func sync(sim, e: Dictionary, gdt: float, view) -> void:
 	var st: String = e.state
 	var v: float = e.get("v", 0.0)
 	var vs = e.get("vs")
+	cue_vs = vs
 	var moving = e.get("path") != null and e.path.size() > 0 and v > 0.03
 	var want_lie = 0.0
 	var lie_h = 0.61
@@ -842,7 +852,18 @@ func sync(sim, e: Dictionary, gdt: float, view) -> void:
 					anim = "Interact" if qq > .08 and qq < .92 else "Idle_Talking"
 					spd = 0.8
 					want_mask = true
-				"diag", "xray", "cardio", "electro", "reboot", "genetics", "inflate", "pump":
+				"inflate", "pump":
+					# 0.9.6: natural stance (no wide "Interact" legs): stand, turn to the machine and work its panel with one hand
+					anim = "Idle_Talking" if qq <= .18 or qq >= .82 else "Idle"
+					var mach2 = view.machine_of(r.id, ["pumpmachine", "inflator"]) if view else null
+					if mach2 and qq > .14 and qq < .86:
+						var panel = mach2.piv.global_transform * Vector3(0, 1.05, .32)
+						var dm = panel - tgt
+						if Vector2(dm.x, dm.z).length() > 0.15: yaw = lerp_angle(rotation.y, atan2(dm.x, dm.z), minf(1.0, gdt * 5.0 + 0.05))
+						if Vector2(dm.x, dm.z).length() < 1.3:
+							reach_world = panel
+							reach_w = ease01((qq - .16) / .08) * (1.0 - ease01((qq - .78) / .06))
+				"diag", "xray", "cardio", "electro", "reboot", "genetics":
 					# explain -> operate the console/machine -> report back
 					anim = "Interact" if qq > .18 and qq < .82 else "Idle_Talking"
 					spd = 0.7
@@ -999,6 +1020,9 @@ func sync(sim, e: Dictionary, gdt: float, view) -> void:
 	if show_tube or tube: _tube().visible = show_tube
 	if want_mask or mask: _mask().visible = want_mask
 	if show_ticket or ticket: _ticket().visible = show_ticket or (ticket != null and ticket.visible and st != "treat" and st != "dead" and st != "leave" and vs == null)
+	if not cue.is_empty():
+		spd = DisCue.speed(self, spd, anim.begins_with("Walk"))
+		DisCue.tick(self, gdt, anim.begins_with("Walk"))
 	play(anim, spd)
 	frame_i += 1
 	acc += gdt * cur_speed
@@ -1007,6 +1031,7 @@ func sync(sim, e: Dictionary, gdt: float, view) -> void:
 		acc = 0.0
 		if lie_k > 0.001: _straighten_legs(lie_k)
 		elif _seat_w > 0.6 and cur == "Sitting_Idle" and reach_w < 0.01: _sit_tweak(ease01((_seat_w - 0.6) / 0.4))
+		if not cue.is_empty() or stoop != 0.0 or shape != Vector3.ONE or head_k != 1.0: DisCue.pose(self)
 		if reach_w > 0.01:
 			var tw = reach_world if reach_world != Vector3.INF else (global_transform * reach_r if reach_r != Vector3.INF else Vector3.INF)
 			if tw != Vector3.INF: _reach("upperarm_r", "hand_r", tw, reach_w)

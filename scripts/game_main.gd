@@ -37,6 +37,7 @@ var dbg_watch = ""
 var dbg_demo = ""
 var dbg_watch_q = 0.5
 var dbg_watch_n = 0
+var dbg_wmax = 20000
 var ff_days = 0
 var shot_path = ""
 var shot_frames = -1
@@ -114,6 +115,10 @@ func _ready() -> void:
 		if dbg_focus != "":
 			var f = dbg_focus.split(",")
 			if dbg_focus == "ent": cam.focus = Vector3(sim.S.ent.x + .5, 0, sim.S.h - 2.0)
+			elif dbg_focus == "leaf": pass
+			elif dbg_focus.begins_with("door:") and not sim.rooms_of(dbg_focus.substr(5)).is_empty():
+				var rd = sim.rooms_of(dbg_focus.substr(5))[0].door
+				cam.focus = Vector3(rd.x + .5, 0, rd.y + .5)
 			else: cam.focus = Vector3(float(f[0]), 0, float(f[1]))
 		cam.apply()
 		_dbg_ui()
@@ -150,6 +155,7 @@ func _parse_args() -> void:
 			dbg_sh = Array(w2)
 		elif a.begins_with("--staff="): dbg_staff = a.substr(8)
 		elif a.begins_with("--big="): dbg_big = int(a.substr(6))
+		elif a.begins_with("--wmax="): dbg_wmax = int(a.substr(7))
 		elif a.begins_with("--speed="): dbg_speed = int(a.substr(8))
 		elif a.begins_with("--audit="):
 			var au = load("res://harness/audit.gd").new()
@@ -250,6 +256,11 @@ func _process(delta: float) -> void:
 	if autosave_t > 60:
 		autosave_t = 0
 		save_game(true)
+	if dbg_focus == "leaf" and view.wb and not view.wb.doors.is_empty():
+		var lf = view.wb.doors.values()[int(dbg_watch_q * 10) % view.wb.doors.size()]
+		cam.focus = Vector3(lf.position.x, 0, lf.position.z); cam.apply()
+		print("LEAF ", view.wb.doors.keys(), " ", lf.position)
+		dbg_focus = "leaf_done"
 	if dbg_watch != "":
 		var hit = null
 		if dbg_watch.begins_with("s_"):
@@ -276,8 +287,8 @@ func _process(delta: float) -> void:
 				var qv = q.get("vs")
 				if qv and qv.ph == "sat" and qv.pose == "sit" and qv.get("sp") and str(qv.sp.get("seat")) == dbg_watch.substr(5) and float(qv.t) > 1.2:
 					cam.focus = Vector3(q.x + .5, 0, q.y + .5); cam.apply(); ok = true; break
-			if shot_frames == 1 and not ok and dbg_watch_n < 20000: shot_frames = 2
-		elif shot_frames == 1 and not dbg_watch.begins_with("s_") and dbg_watch_n < 20000 and (hit == null or CharPuppet.procQ(hit) < dbg_watch_q):
+			if shot_frames == 1 and not ok and dbg_watch_n < dbg_wmax: shot_frames = 2
+		elif shot_frames == 1 and not dbg_watch.begins_with("s_") and dbg_watch_n < dbg_wmax and (hit == null or CharPuppet.procQ(hit) < dbg_watch_q):
 			shot_frames = 2
 	if shot_frames >= 0:
 		shot_frames -= 1

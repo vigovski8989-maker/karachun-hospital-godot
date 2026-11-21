@@ -86,12 +86,18 @@ func sync(gdt: float) -> void:
 var _tiles = {}
 var _tiles_n = -1
 func item_at_tile(x: int, y: int):
-	if _tiles.is_empty() or _tiles_n != sim.S.rooms.size():
-		_tiles = {"_": true}; _tiles_n = sim.S.rooms.size()
+	var tn = sim.S.rooms.size() * 100000 + sim.S.items.size()
+	if _tiles.is_empty() or _tiles_n != tn:
+		_tiles = {"_": true}; _tiles_n = tn
 		for r in sim.S.rooms:
 			for t in r.get("it", []):
 				var fp = t.get("fp") if t.get("fp") else sim.fpOf(t.k)
 				for tt in sim.tilesOf(t.x, t.y, fp): _tiles[tt[1] * 10000 + tt[0]] = t
+		# 0.9.6: corridor items too (benches, bins, vending...) so walkers never step up onto a bench seat
+		for i in sim.S.items:
+			var fp2 = i.get("fp") if i.get("fp") != null else sim.fpOf(i.type)
+			var w = {"k": str(i.type), "soft": false, "corr": true}
+			for tt in sim.tilesOf(i.x, i.y, fp2): _tiles[tt[1] * 10000 + tt[0]] = w
 	return _tiles.get(y * 10000 + x)
 
 func rebuild() -> void:
@@ -115,7 +121,7 @@ func rebuild() -> void:
 		if not l.own:
 			_flat(dyn_root, Rect2(l.x, l.y, l.w, l.h), mats.lot, 0.01)
 			var lab = Label3D.new()
-			lab.text = "🏞 Участок $" + str(int(l.price))
+			lab.text = "Участок $" + str(int(l.price))
 			lab.font_size = 64; lab.pixel_size = 0.01; lab.billboard = BaseMaterial3D.BILLBOARD_ENABLED
 			lab.modulate = Color(1, 0.9, 0.5); lab.outline_size = 10
 			lab.position = Vector3(l.x + l.w / 2.0, 0.6, l.y + l.h / 2.0)
@@ -125,18 +131,25 @@ func rebuild() -> void:
 		var lab2 = Label3D.new()
 		lab2.text = sim.drm(r.type).name
 		lab2.font_size = 40; lab2.pixel_size = 0.006; lab2.billboard = BaseMaterial3D.BILLBOARD_ENABLED
-		lab2.outline_size = 10
+		lab2.outline_size = 12; lab2.outline_modulate = Color(0.08, 0.18, 0.24, 0.95)
+		# 0.9.6: a plaque on a short post standing on the wall top (readable, attached to the wall)
+		var post = MeshInstance3D.new(); var pm = BoxMesh.new(); pm.size = Vector3(.07, .16, .07)
+		post.mesh = pm; post.position = Vector3(r.x + r.w / 2.0, WorldBuild.HB + .08, r.y + WorldBuild.TH / 2.0)
+		var pmat = StandardMaterial3D.new(); pmat.albedo_color = Color(0.08, 0.18, 0.24); post.material_override = pmat
+		post.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+		dyn_root.add_child(post)
+		lab2.set_meta("maxw", maxf(1.2, r.w - 0.3)); lab2.set_meta("hb", WorldBuild.HB + .14)
 		lab2.font = UIKit.font_800
 		lab2.modulate = Color(1, 1, 1, 0.92)
 		lab2.width = 400; lab2.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 		# middle of the back wall, just above the wall top: never on top of people (0.9.5)
-		lab2.position = Vector3(r.x + r.w / 2.0, WorldBuild.HB + 0.38, r.y + 0.12)
+		lab2.position = Vector3(r.x + r.w / 2.0, WorldBuild.HB + 0.4, r.y + WorldBuild.TH / 2.0)
 		dyn_root.add_child(lab2)
 		labels[r.id] = lab2
 		if r.type == "lab": _lab_stool(r)
 	_lab_zoom = -1.0
 	var ent = Label3D.new()
-	ent.text = "🏥 Больница «Карачун»"
+	ent.text = "Больница «Карачун»"
 	ent.font_size = 48; ent.pixel_size = 0.008; ent.billboard = BaseMaterial3D.BILLBOARD_ENABLED; ent.outline_size = 12
 	ent.modulate = Color(1, 0.95, 0.7)
 	ent.position = Vector3(S.ent.x + 0.5, 1.0, H + 3.6)   # on the lawn, away from the walking crowd
@@ -165,8 +178,27 @@ func _sync_doors(_gdt: float) -> void:
 	for r in sim.S.rooms:
 		var leaf = wb.doors.get(r.id)
 		if leaf == null: continue
-		var t = minf(1.0, float(r.get("dop", 0.0))) * 1.3
-		leaf.rotation.y = float(leaf.get_meta("base")) - t
+		# 0.9.6: swing ~100 deg AWAY from whoever is walking through (latched until closed) -> the leaf never cuts an arm
+		var dop = minf(1.0, float(r.get("dop", 0.0)))
+		var base = float(leaf.get_meta("base"))
+		var sg = float(leaf.get_meta("sg", 0.0))
+		if dop < 0.02: sg = 0.0
+		elif sg == 0.0:
+			var B0 = Basis(Vector3.UP, base)
+			var C0 = leaf.position + B0 * Vector3(.37, 0, 0)
+			var nrm = B0 * Vector3(0, 0, 1)
+			var best = null; var bd = 9.0
+			for e in sim.S.pats + sim.S.staff:
+				var d = absf(float(e.x) + .5 - C0.x) + absf(float(e.y) + .5 - C0.z)
+				if d < bd: bd = d; best = e
+			sg = 1.0
+			if best != null:
+				var side = (Vector3(float(best.x) + .5, 0, float(best.y) + .5) - C0).dot(nrm)
+				var tip = (Basis(Vector3.UP, base + 1.0) * Vector3(.74, 0, 0)).dot(nrm)
+				sg = -1.0 if side * tip > 0 else 1.0
+		leaf.set_meta("sg", sg)
+		var t = ease(dop, 0.6) * 1.75
+		leaf.rotation.y = base + (sg if sg != 0.0 else -1.0) * t
 
 func _sync_litter() -> void:
 	var lit: Array = sim.S.litter
@@ -203,6 +235,7 @@ func _make_puppet(e: Dictionary, staff: bool) -> CharPuppet:
 	var glb = "patient_a"
 	var tint = null
 	var dis_look = ""
+	var L: Dictionary = {}
 	if staff:
 		glb = STAFF_GLB.get(e.type, "patient_a")
 		tint = STAFF_TINT.get(e.type)
@@ -210,17 +243,14 @@ func _make_puppet(e: Dictionary, staff: bool) -> CharPuppet:
 	else:
 		var dis: String = "" if e.get("healed") else str(e.get("dis", ""))
 		dis_look = dis
-		if dis in BIG: glb = "bighead"
-		elif dis in INV: glb = "invisible"
-		elif dis in MUM: glb = "mummy"
-		elif dis in ROCK: glb = "rocker"
-		var tc = Color.from_hsv(_shirt_hue(float(e.get("hue", 0))) / 360.0, 0.62, 0.9)
-		tint = Color(tc.r * 1.7, tc.g * 1.7, tc.b * 1.7, 1.0) if glb == "patient_a" else null
-		if e.get("vip"): tint = Color(0.15, 0.15, 0.18)
+		L = LookPool.roll(e, dis, bool(e.get("vip", false)))
+		glb = L.glb; tint = L.tint
+		if L.tex != "": p.cloth_tex = load(L.tex)
 		p.kind = "patient"
 	p.is_staff = staff
 	p.eid = e.id
-	p.setup("res://assets/chars/%s.glb" % glb, tint)
+	p.setup("res://assets/chars/%s.glb" % glb, tint, float(L.scale) if not L.is_empty() else 1.0)
+	if not L.is_empty(): LookPool.apply(p, L)
 	var hsh: int = absi(hash(int(e.id) * 7919 + 13))
 	var tone: Color = CharPuppet.SKIN_TONES[hsh % CharPuppet.SKIN_TONES.size()]
 	var shoe: Color = SHOES[(hsh / 7) % SHOES.size()]
@@ -229,12 +259,13 @@ func _make_puppet(e: Dictionary, staff: bool) -> CharPuppet:
 	p.set_look(tone, shoe, dis_look)
 	p.healed_look = (e.get("healed") == true)
 	if not staff and dis_look != "" and DIS_ICON.has(dis_look):
-		var bl = Label3D.new()
-		bl.text = DIS_ICON[dis_look]
-		bl.font = UIKit.font_800 if UIKit.font_800 else null
-		bl.font_size = 64; bl.pixel_size = 0.0034; bl.outline_size = 0
+		# 0.9.5 used emoji text: some phones draw missing glyphs as white rectangles -> bundled icon textures
+		var bl = Sprite3D.new()
+		bl.texture = load("res://assets/icons/%s.png" % dis_look)
+		bl.pixel_size = 0.0022
 		bl.billboard = BaseMaterial3D.BILLBOARD_ENABLED
-		bl.position = Vector3(0, 2.05, 0)
+		bl.shaded = false; bl.double_sided = true; bl.alpha_cut = SpriteBase3D.ALPHA_CUT_DISABLED
+		bl.position = Vector3(0, 2.0, 0)
 		p.add_child(bl)
 		p.badge = bl
 	if glb == "invisible":
@@ -370,9 +401,15 @@ func _scale_labels(zoom: float) -> void:
 	if absf(zoom - _lab_zoom) < 0.05: return
 	_lab_zoom = zoom
 	var ps = clampf(zoom * 0.0007, 0.002, 0.02)
+	var ps_wall = minf(ps, 0.016)
 	for k in labels:
 		var l = labels[k]
-		if is_instance_valid(l): l.pixel_size = ps
+		if is_instance_valid(l):
+			l.pixel_size = ps_wall if l.has_meta("maxw") else ps
+			if l.has_meta("maxw"):
+				var tw = maxf(1.0, l.get_aabb().size.x)
+				if tw > l.get_meta("maxw"): l.pixel_size = ps_wall * l.get_meta("maxw") / tw
+				l.position.y = float(l.get_meta("hb")) + maxf(0.12, l.get_aabb().size.y / 2.0)
 
 func _sync_one(e: Dictionary, staff: bool, gdt: float, seen: Dictionary, focus: Vector3, zoom: float) -> void:
 	var id: int = e.id
@@ -406,15 +443,16 @@ func set_room_k(rid, k: float, direct: bool) -> void:
 
 var emotes = []
 func _emote(pos: Vector3, txt: String) -> void:
-	var l = Label3D.new()
-	l.text = txt
-	l.font_size = 96
-	l.pixel_size = 0.004
+	var key = {"💀": "x_skull", "💚": "x_heart_green"}.get(txt, "x_sparkle")
+	var l = Sprite3D.new()
+	l.texture = load("res://assets/icons/%s.png" % key)
+	l.pixel_size = 0.005
 	l.billboard = BaseMaterial3D.BILLBOARD_ENABLED
-	l.no_depth_test = true
+	l.shaded = false; l.no_depth_test = true
 	l.position = pos + Vector3(0, 2.0, 0)
 	add_child(l)
 	emotes.append({"n": l, "t": 0.0})
+
 
 func _tick_emotes(gdt: float) -> void:
 	for i in range(emotes.size() - 1, -1, -1):
