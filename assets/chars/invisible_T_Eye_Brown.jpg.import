@@ -3,9 +3,11 @@
 importer="texture"
 type="CompressedTexture2D"
 uid="uid://dhuxksx4mgqo2"
-path="res://.godot/imported/invisible_T_Eye_Brown.jpg-6cd622023612e9ea3132cbb6a0742361.ctex"
+path.s3tc="res://.godot/imported/invisible_T_Eye_Brown.jpg-6cd622023612e9ea3132cbb6a0742361.s3tc.ctex"
+path.etc2="res://.godot/imported/invisible_T_Eye_Brown.jpg-6cd622023612e9ea3132cbb6a0742361.etc2.ctex"
 metadata={
-"vram_texture": false
+"imported_formats": ["s3tc_bptc", "etc2_astc"],
+"vram_texture": true
 }
 generator_parameters={
 "md5": "d7c01e7b10a4f4be57413cab68f740c3"
@@ -14,11 +16,11 @@ generator_parameters={
 [deps]
 
 source_file="res://assets/chars/invisible_T_Eye_Brown.jpg"
-dest_files=["res://.godot/imported/invisible_T_Eye_Brown.jpg-6cd622023612e9ea3132cbb6a0742361.ctex"]
+dest_files=["res://.godot/imported/invisible_T_Eye_Brown.jpg-6cd622023612e9ea3132cbb6a0742361.s3tc.ctex", "res://.godot/imported/invisible_T_Eye_Brown.jpg-6cd622023612e9ea3132cbb6a0742361.etc2.ctex"]
 
 [params]
 
-compress/mode=0
+compress/mode=2
 compress/high_quality=false
 compress/lossy_quality=0.7
 compress/uastc_level=0
@@ -39,5 +41,5 @@ process/premult_alpha=false
 process/normal_map_invert_y=false
 process/hdr_as_srgb=false
 process/hdr_clamp_exposure=false
-process/size_limit=0
+process/size_limit=512
 detect_3d/compress_to=1

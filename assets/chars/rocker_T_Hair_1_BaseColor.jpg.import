@@ -3,9 +3,11 @@
 importer="texture"
 type="CompressedTexture2D"
 uid="uid://4hc33b8wbtu2"
-path="res://.godot/imported/rocker_T_Hair_1_BaseColor.jpg-98057cec5c32349e70d30029323a38d4.ctex"
+path.s3tc="res://.godot/imported/rocker_T_Hair_1_BaseColor.jpg-98057cec5c32349e70d30029323a38d4.s3tc.ctex"
+path.etc2="res://.godot/imported/rocker_T_Hair_1_BaseColor.jpg-98057cec5c32349e70d30029323a38d4.etc2.ctex"
 metadata={
-"vram_texture": false
+"imported_formats": ["s3tc_bptc", "etc2_astc"],
+"vram_texture": true
 }
 generator_parameters={
 "md5": "e13a6c096095321bf2c536dbde120802"
@@ -14,11 +16,11 @@ generator_parameters={
 [deps]
 
 source_file="res://assets/chars/rocker_T_Hair_1_BaseColor.jpg"
-dest_files=["res://.godot/imported/rocker_T_Hair_1_BaseColor.jpg-98057cec5c32349e70d30029323a38d4.ctex"]
+dest_files=["res://.godot/imported/rocker_T_Hair_1_BaseColor.jpg-98057cec5c32349e70d30029323a38d4.s3tc.ctex", "res://.godot/imported/rocker_T_Hair_1_BaseColor.jpg-98057cec5c32349e70d30029323a38d4.etc2.ctex"]
 
 [params]
 
-compress/mode=0
+compress/mode=2
 compress/high_quality=false
 compress/lossy_quality=0.7
 compress/uastc_level=0
@@ -39,5 +41,5 @@ process/premult_alpha=false
 process/normal_map_invert_y=false
 process/hdr_as_srgb=false
 process/hdr_clamp_exposure=false
-process/size_limit=0
+process/size_limit=512
 detect_3d/compress_to=1

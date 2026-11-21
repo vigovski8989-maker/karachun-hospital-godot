@@ -116,7 +116,11 @@ func _tick():
 	for p in pups:
 		p.play(p.get_meta("anim"))
 		p.ap.advance(0.05)
+		if p.model and p.get_meta("seat_h") <= 0: p.model.position.y = 0.0
 		if not p.cue.is_empty(): DisCue.tick(p, 0.05, p.get_meta("anim") == "Walk")
+		if p.badge and not OS.get_environment("NOBADGE_TICK"):
+			p.badge_tick(true)
+			if p.badge: p.badge.visible = true; p.badge.modulate.a = 1.0
 		if not p.cue.is_empty() or p.stoop != 0.0 or p.shape != Vector3.ONE or p.head_k != 1.0: DisCue.pose(p)
 		p._seat_w = 1.0 if p.get_meta("seat_h") > 0 else 0.0
 		if p._seat_w > 0.5 and p.cur == "Sitting_Idle" and not no_tweak: p._sit_tweak(1.0)
@@ -124,6 +128,8 @@ func _tick():
 		if sh > 0 and p.thigh_l >= 0:
 			var ty = (p.skel.get_bone_global_pose(p.thigh_l).origin.y + p.skel.get_bone_global_pose(p.thigh_r).origin.y) * 0.5
 			p.model.position.y = clampf(sh + .08 - ty, -.3, .3)
+	if frames == snaps[-1] and OS.get_environment("DBG_HEAD") != "":
+		for p in pups: print("HEADDBG ", p.head_k, " idx ", p.head_idx, " sc ", p.skel.get_bone_pose_scale(p.head_idx) if p.head_idx >= 0 else null, " cue ", p.cue.get("d", ""))
 	if frames in snaps:
 		root.get_viewport().get_texture().get_image().save_png(out.replace(".png", "_%d.png" % frames) if snaps.size() > 1 else out)
 		if frames == snaps[-1]: quit()

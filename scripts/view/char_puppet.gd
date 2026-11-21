@@ -311,6 +311,7 @@ var head_scale = 1.0
 var pill: Node3D
 var shock_t = 0.0
 var sep_off = Vector3.ZERO
+var loose_off = Vector3.ZERO
 var seated = false
 var greet_at = null
 var shock_at = Vector3.ZERO
@@ -333,6 +334,21 @@ func _ticket() -> Node3D:
 		attach_prop("ticket", ticket, "hand_r", Vector3(0, .07, .04), Vector3(0, 0, PI / 2))
 		ticket.visible = false
 	return ticket
+var clip_l: Node3D
+var clip_r: Node3D
+var clip_w = 0.0
+func _clipboard(left: bool) -> Node3D:
+	var c = clip_l if left else clip_r
+	if c == null:
+		c = Node3D.new()
+		Geo.box(c, Vector3(.2, .012, .27), Geo.mat(Color("#8a5a2b"), .7), Vector3.ZERO, .0)
+		Geo.box(c, Vector3(.17, .006, .22), Geo.mat(Color("#fafafa"), .8), Vector3(0, .009, -.01), .0)
+		Geo.box(c, Vector3(.07, .02, .03), Geo.mat(Color("#b0b0b0"), .4, .6), Vector3(0, .012, .12), .0)
+		attach_prop("clip_l" if left else "clip_r", c, "hand_l" if left else "hand_r", Vector3(0, .06, .06), Vector3(0.3, 0, PI / 2 * (1 if left else -1)))
+		c.visible = false
+		if left: clip_l = c
+		else: clip_r = c
+	return c
 var hose: MeshInstance3D
 # root offset in front of the seat tile centre so the pelvis lands ~0.10 m in front of the backrest face.
 # Measured (harness/measure.gd): backrest face z -0.14 (chair/bench), -0.18 (office), -0.10 (sofa, elchair);
@@ -491,6 +507,37 @@ func _bed_pose(sim, b, sp, L: float, cur: Vector3) -> Dictionary:
 var pelvis_h = 0.95
 var lie_direct = false
 var _last_free = null
+# 0.9.7: disease icon sits just above its own head and comes and goes (shown ~2.6 s of every 7 s), never parked in the air
+# 0.9.7: some staff idles stand with feet far apart -> bring each foot to ~11 cm from the body centre line
+func _narrow_legs() -> void:
+	DisCue._undo(self)
+	var sk = skel
+	var tl = sk.find_bone("thigh_l"); var tr = sk.find_bone("thigh_r")
+	var fl = sk.find_bone("foot_l"); var fr = sk.find_bone("foot_r")
+	if tl < 0 or tr < 0 or fl < 0 or fr < 0: return
+	var fwd: Vector3 = (sk.global_basis.inverse() * global_basis * Vector3(0, 0, 1)).normalized()
+	var side: Vector3 = Vector3.UP.cross(fwd).normalized()
+	var mid = (sk.get_bone_global_pose(tl).origin + sk.get_bone_global_pose(tr).origin) * 0.5
+	for pr in [[tl, fl], [tr, fr]]:
+		var hip = sk.get_bone_global_pose(pr[0]).origin
+		var before = (sk.get_bone_global_pose(pr[1]).origin - mid).dot(side)
+		var L = maxf(0.3, hip.distance_to(sk.get_bone_global_pose(pr[1]).origin))
+		var want = 0.11 * signf(before)
+		if absf(before) <= 0.13: continue
+		var ang = clampf(atan((absf(before) - absf(want)) / L), 0.0, 0.3)
+		DisCue._rot(self, sk.get_bone_name(pr[0]), fwd, ang)
+		var after = (sk.get_bone_global_pose(pr[1]).origin - mid).dot(side)
+		if absf(after) > absf(before): DisCue._rot(self, sk.get_bone_name(pr[0]), fwd, -2.0 * ang)
+
+static var _dbg_anim = OS.get_environment("DBGANIM") != ""
+func badge_tick(alive: bool) -> void:
+	if badge == null: return
+	var ph = fmod(Time.get_ticks_msec() / 1000.0 + float(eid % 97) * 1.37, 7.0)
+	var a = clampf(ph / 0.4, 0.0, 1.0) * (1.0 - clampf((ph - 2.6) / 0.4, 0.0, 1.0))
+	badge.visible = alive and a > 0.01
+	badge.modulate.a = a
+	badge.global_position = head_world() + Vector3(0, 0.22 + 0.1 * head_scale * head_k, 0)
+
 func is_fixed() -> bool:
 	return (seated or lab_sit) and (_seat_w > 0.3 or lie_k > 0.05)
 # view-only walk (lab nurse goes round the counter): sim position stays at the staff spot
@@ -709,7 +756,7 @@ func sync(sim, e: Dictionary, gdt: float, view) -> void:
 	var want_mask = false
 	var hose_to = null
 	var show_tube = false
-	reach_r = Vector3.INF; reach_world = Vector3.INF; reach_w = 0.0
+	reach_r = Vector3.INF; reach_world = Vector3.INF; reach_w = 0.0; reach_left = false; clip_w = 0.0
 	seated = vs != null
 	lab_sit = false
 	shock_t = maxf(0.0, shock_t - gdt)
@@ -853,16 +900,31 @@ func sync(sim, e: Dictionary, gdt: float, view) -> void:
 					spd = 0.8
 					want_mask = true
 				"inflate", "pump":
-					# 0.9.6: natural stance (no wide "Interact" legs): stand, turn to the machine and work its panel with one hand
-					anim = "Idle_Talking" if qq <= .18 or qq >= .82 else "Idle"
-					var mach2 = view.machine_of(r.id, ["pumpmachine", "inflator"]) if view else null
-					if mach2 and qq > .14 and qq < .86:
-						var panel = mach2.piv.global_transform * Vector3(0, 1.05, .32)
-						var dm = panel - tgt
-						if Vector2(dm.x, dm.z).length() > 0.15: yaw = lerp_angle(rotation.y, atan2(dm.x, dm.z), minf(1.0, gdt * 5.0 + 0.05))
-						if Vector2(dm.x, dm.z).length() < 1.3:
-							reach_world = panel
-							reach_w = ease01((qq - .16) / .08) * (1.0 - ease01((qq - .78) / .06))
+					# 0.9.7: doctor walks to the machine's other side, faces the patient across it and works the panel
+					anim = "Idle"
+					spd = 0.7
+					var stg2 = view.machine_stage(r.id, ["pumpmachine", "inflator"]) if view else null
+					if stg2 and qq < .9:
+						if vw_goal != "pat":
+							if vw_pos == null: vw_pos = tgt; vw_home = tgt
+							var pts = _tile_pts(sim, vw_pos, int(floor(stg2.doc.x)), int(floor(stg2.doc.z)))
+							pts.push_front(vw_pos); pts.append(stg2.doc)
+							pts = _smooth(sim, pts); pts.pop_front()
+							vw_pts = pts; vw_goal = "pat"; vw_arrived = false; vw_arr_t = 0.0
+							vw_home_pts = pts.duplicate(); vw_home_pts.reverse(); vw_home_pts.append(vw_home)
+						if vw_goal == "pat" and vw_pts.is_empty():
+							vw_arrived = true; vw_arr_t += gdt
+							# face between the patient and the camera, so the face and the panel hand read from the default view
+							var dfp = stg2.pat - vw_pos
+							var ty2 = lerp_angle(atan2(dfp.x, dfp.z), PI / 4.0, 0.45)
+							yaw = lerp_angle(rotation.y, ty2, minf(1.0, gdt * 6.0 + 0.05))
+							if Vector3(stg2.panel.x, 0, stg2.panel.z).distance_to(vw_pos) < 1.0:
+								reach_world = stg2.panel
+								var lp = (Basis(Vector3.UP, yaw).inverse() * (stg2.panel - vw_pos))
+								reach_left = lp.x > 0.0
+								reach_w = ease01(vw_arr_t / .4) * ease01((qq - .16) / .08) * (1.0 - ease01((qq - .78) / .06))
+							clip_w = ease01(vw_arr_t / .4)
+					elif vw_goal == "pat": _vw_go_home(sim, tgt)
 				"diag", "xray", "cardio", "electro", "reboot", "genetics":
 					# explain -> operate the console/machine -> report back
 					anim = "Interact" if qq > .18 and qq < .82 else "Idle_Talking"
@@ -907,11 +969,29 @@ func sync(sim, e: Dictionary, gdt: float, view) -> void:
 					if q2 > .6 and q2 < .92: anim = "Interact"
 					show_pill = q2 >= .8
 				"pump", "inflate":
+					# 0.9.7: step up beside the machine, side-on to it; hose on the head; head visibly swells / shrinks
 					anim = "Idle"
 					var mach = view.machine_of(r2.id, ["pumpmachine", "inflator"])
-					if mach: hose_to = mach
-					if r2.type == "inflate": hs_target = 1.0 + .35 * sin(minf(1.0, q2 / .7) * PI)
-					elif str(e.get("dis")) in ["balloonhead", "cloudhead"]: hs_target = lerpf(1.0, 1.0 / 1.35, minf(1.0, q2 / .8))
+					var stg = view.machine_stage(r2.id, ["pumpmachine", "inflator"])
+					if stg:
+						var spot = tgt
+						var kin = clampf(q2 / .12, 0, 1) if q2 < .5 else clampf((1.0 - q2) / .1, 0, 1)
+						var dv = stg.pat - spot
+						tgt = spot.lerp(stg.pat, ease01(kin))
+						if kin > 0.0 and kin < 1.0 and dv.length() > 0.05:
+							anim = "Walk"; spd = 0.75
+							yaw = atan2(dv.x, dv.z) if q2 < .5 else atan2(-dv.x, -dv.z)
+						else:
+							# half-turned to the camera so face, hose and swelling head read from the default view
+							var dc = stg.c - stg.pat
+							var ty = lerp_angle(atan2(dc.x, dc.z), PI / 4.0, 0.72)
+							yaw = lerp_angle(rotation.y, ty, minf(1.0, gdt * 6.0 + 0.05))
+					var on = q2 > .16 and q2 < .86
+					if mach and on: hose_to = mach
+					var u = clampf((q2 - .18) / .62, 0, 1)
+					if r2.type == "inflate" or not str(e.get("dis")) in ["balloonhead", "cloudhead"]:
+						hs_target = 1.0 + .9 * sin(u * PI) + .06 * sin(u * 40.0) * float(on)
+					else: hs_target = lerpf(1.0, 1.0 / maxf(1.0, head_k), ease01(u)) + .05 * sin(u * 40.0) * float(on)
 				"xray", "reboot":
 					var mk = "xray" if r2.type == "xray" else "rebootpod"
 					var m2 = view.machine_of(r2.id, [mk])
@@ -990,9 +1070,10 @@ func sync(sim, e: Dictionary, gdt: float, view) -> void:
 		model.position = Vector3(0, _gy, 0)
 	if dis_k == "rubberknee" and moving and lie_k < .05: model.position.y += absf(sin(Time.get_ticks_msec() * .009)) * .1
 	if dis_k == "jellyspine" and lie_k < .05: model.rotation.z = sin(Time.get_ticks_msec() * .006) * .07
-	if badge:
-		badge.visible = st != "dead"
-		badge.global_position = head_world() + Vector3(0, .42, 0)
+	if badge: badge_tick(st != "dead")
+	# 0.9.7: people standing in the reception line face the desk
+	if not is_staff and vs == null and st == "queue" and not moving and e.get("wsp") != null and e.get("dir") != null:
+		yaw = lerp_angle(rotation.y, dir_yaw(e.dir), minf(1.0, gdt * 6.0 + 0.05))
 	# view-side: a walking body stops at the edge of solid furniture instead of walking through it
 	if vs == null and lie_k < 0.05 and vw_pos == null and view and st != "dead":
 		var tx = int(floor(tgt.x)); var tz = int(floor(tgt.z))
@@ -1014,15 +1095,28 @@ func sync(sim, e: Dictionary, gdt: float, view) -> void:
 		elif vw_goal == "home":
 			vw_pos = null; vw_goal = ""
 		if vw_pos != null: tgt = vw_pos
+	# 0.9.7: reception overflow waits outside the entrance as a loose group, not a row on the facade line
+	var lw = Vector3.ZERO
+	if not is_staff and vs == null and st == "queue" and e.get("wsp") != null and float(e.y) >= float(sim.S.h - 1) - 0.01:
+		var hsh = (eid * 2654435761) % 1000
+		lw = Vector3((float(hsh % 10) / 9.0 - 0.5) * 0.7, 0, 0.5 + float(hsh / 10 % 10) / 9.0 * 1.6)
+	loose_off = loose_off.lerp(lw, minf(1.0, gdt * 1.5))
+	tgt += loose_off
 	position = tgt
 	rotation.y = yaw
 	if show_pill or pill: _pill().visible = show_pill
 	if show_tube or tube: _tube().visible = show_tube
 	if want_mask or mask: _mask().visible = want_mask
+	if clip_w > 0.01 or clip_l or clip_r:
+		var cl = clip_w > 0.01 and not reach_left
+		var cr = clip_w > 0.01 and reach_left
+		if cl or clip_l: _clipboard(true).visible = cl
+		if cr or clip_r: _clipboard(false).visible = cr
 	if show_ticket or ticket: _ticket().visible = show_ticket or (ticket != null and ticket.visible and st != "treat" and st != "dead" and st != "leave" and vs == null)
 	if not cue.is_empty():
 		spd = DisCue.speed(self, spd, anim.begins_with("Walk"))
 		DisCue.tick(self, gdt, anim.begins_with("Walk"))
+	if _dbg_anim and is_staff and st == "work" and frame_i % 20 == 0: print("DBGANIM ", e.type, " ", anim, " cur ", cur, " spd ", snappedf(spd, .01), " vw ", vw_goal, " ", vw_pts.size(), " sep ", sep_off)
 	play(anim, spd)
 	frame_i += 1
 	acc += gdt * cur_speed
@@ -1032,14 +1126,27 @@ func sync(sim, e: Dictionary, gdt: float, view) -> void:
 		if lie_k > 0.001: _straighten_legs(lie_k)
 		elif _seat_w > 0.6 and cur == "Sitting_Idle" and reach_w < 0.01: _sit_tweak(ease01((_seat_w - 0.6) / 0.4))
 		if not cue.is_empty() or stoop != 0.0 or shape != Vector3.ONE or head_k != 1.0: DisCue.pose(self)
+		elif is_staff and not moving and lie_k < 0.01 and cur in [anim_name("Idle"), anim_name("Idle_Talking")]: _narrow_legs()
 		if reach_w > 0.01:
 			var tw = reach_world if reach_world != Vector3.INF else (global_transform * reach_r if reach_r != Vector3.INF else Vector3.INF)
-			if tw != Vector3.INF: _reach("upperarm_r", "hand_r", tw, reach_w)
+			if tw != Vector3.INF:
+				if reach_left: _reach("upperarm_l", "hand_l", tw, reach_w)
+				else: _reach("upperarm_r", "hand_r", tw, reach_w)
+		if clip_w > 0.01:
+			# the free hand holds a clipboard in front of the chest
+			var o = "r" if reach_left else "l"
+			var sgn = -1.0 if o == "r" else 1.0
+			var cw = global_transform * Vector3(sgn * 0.1, 1.08, 0.3)
+			var fwd2 = global_basis * Vector3(0, 0, 1)
+			var side2 = global_basis * Vector3(sgn, 0, 0)
+			var pole = skel.global_basis.inverse() * (Vector3(0, -1, 0) - fwd2 * 0.4 + side2 * 0.5)
+			_ik2("upperarm_" + o, "hand_" + o, skel.global_transform.affine_inverse() * cw, clip_w, pole)
 	if lie_k > 0.001: _place_lying()
 	# head scale (pump/inflate): applied after the animation pose
 	head_scale = lerpf(head_scale, hs_target, minf(1.0, gdt * 4.0 + 0.0001))
 	if skel and head_idx >= 0 and absf(head_scale - 1.0) > 0.005:
-		skel.set_bone_pose_scale(head_idx, Vector3.ONE * head_scale)
+		var hk2 = head_k * head_scale
+		skel.set_bone_pose_scale(head_idx, Vector3(hk2 / shape.x, hk2, hk2 / shape.z))
 	_hose(hose_to)
 
 func _hose(mach) -> void:
@@ -1054,8 +1161,8 @@ func _hose(mach) -> void:
 		add_child(hose)
 	hose.visible = true
 	var A = mach.piv.global_transform * Vector3(0, 1.15, .4)
-	var B = head_world() + Vector3(0, 0.17 * head_scale, 0)
-	var M = A.lerp(B, .5); M.y = maxf(A.y, B.y) + .35
+	var B = head_world() + Vector3(0, 0.2 * head_scale * head_k, 0)
+	var M = A.lerp(B, .5); M.y = maxf(A.y, B.y) + .08
 	var im: ImmediateMesh = hose.mesh
 	im.clear_surfaces()
 	im.surface_begin(Mesh.PRIMITIVE_TRIANGLES)
@@ -1078,6 +1185,7 @@ func _hose(mach) -> void:
 var reach_r = Vector3.INF
 var reach_world = Vector3.INF
 var reach_w = 0.0
+var reach_left = false
 var tube: Node3D
 func _tube() -> Node3D:
 	if tube == null:

@@ -3,9 +3,11 @@
 importer="texture"
 type="CompressedTexture2D"
 uid="uid://d0l6n4dii5h5f"
-path="res://.godot/imported/mummy_mummy_cloth_rough.jpg-15bc1070f5df19e7ded90344417f60a7.ctex"
+path.s3tc="res://.godot/imported/mummy_mummy_cloth_rough.jpg-15bc1070f5df19e7ded90344417f60a7.s3tc.ctex"
+path.etc2="res://.godot/imported/mummy_mummy_cloth_rough.jpg-15bc1070f5df19e7ded90344417f60a7.etc2.ctex"
 metadata={
-"vram_texture": false
+"imported_formats": ["s3tc_bptc", "etc2_astc"],
+"vram_texture": true
 }
 generator_parameters={
 "md5": "a6ad098637d115d59a349c37ae0770e2"
@@ -14,11 +16,11 @@ generator_parameters={
 [deps]
 
 source_file="res://assets/chars/mummy_mummy_cloth_rough.jpg"
-dest_files=["res://.godot/imported/mummy_mummy_cloth_rough.jpg-15bc1070f5df19e7ded90344417f60a7.ctex"]
+dest_files=["res://.godot/imported/mummy_mummy_cloth_rough.jpg-15bc1070f5df19e7ded90344417f60a7.s3tc.ctex", "res://.godot/imported/mummy_mummy_cloth_rough.jpg-15bc1070f5df19e7ded90344417f60a7.etc2.ctex"]
 
 [params]
 
-compress/mode=0
+compress/mode=2
 compress/high_quality=false
 compress/lossy_quality=0.7
 compress/uastc_level=0
@@ -39,5 +41,5 @@ process/premult_alpha=false
 process/normal_map_invert_y=false
 process/hdr_as_srgb=false
 process/hdr_clamp_exposure=false
-process/size_limit=0
+process/size_limit=512
 detect_3d/compress_to=1

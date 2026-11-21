@@ -38,6 +38,8 @@ var dbg_demo = ""
 var dbg_watch_q = 0.5
 var dbg_watch_n = 0
 var dbg_wmax = 20000
+var dbg_rbench = 0   # debug: put N benches near the first reception (shots)
+var dbg_crowd = 0   # debug: spawn N extra patients right away (busy reception shots)
 var ff_days = 0
 var shot_path = ""
 var shot_frames = -1
@@ -111,6 +113,20 @@ func _ready() -> void:
 				for s0 in sim.S.staff: s0.fat = 96.0
 				if not keep_w: dbg_watch = "s_" + dbg_staff
 			print("DEMO ", dbg_demo, " rooms ", sim.rooms_of(dbg_demo).size(), " routed ", n)
+		if dbg_rbench > 0 and not sim.rooms_of("reception").is_empty():
+			var rr = sim.rooms_of("reception")[0]
+			var o = sim.doorOut(rr)
+			var nb = 0
+			sim.S.money += 5000
+			for dy in [2, -2, 3, -3, 4, -4]:
+				for dx in [-4, -2, 2, 4, -6, 6]:
+					if nb < dbg_rbench and sim.placeItem("bench", o.x + dx, o.y + dy, 1) != null: nb += 1
+			print("RBENCH ", nb)
+		if dbg_crowd > 0:
+			for i in dbg_crowd:
+				var np = sim.spawnPatient()
+				if np is Dictionary: np.x = float(sim.S.ent.x) + float(i % 3) * 0.0
+			print("CROWD ", sim.S.pats.size())
 		if dbg_zoom > 0: cam.zoom = dbg_zoom
 		if dbg_focus != "":
 			var f = dbg_focus.split(",")
@@ -156,6 +172,8 @@ func _parse_args() -> void:
 		elif a.begins_with("--staff="): dbg_staff = a.substr(8)
 		elif a.begins_with("--big="): dbg_big = int(a.substr(6))
 		elif a.begins_with("--wmax="): dbg_wmax = int(a.substr(7))
+		elif a.begins_with("--crowd="): dbg_crowd = int(a.substr(8))
+		elif a.begins_with("--rbench="): dbg_rbench = int(a.substr(9))
 		elif a.begins_with("--speed="): dbg_speed = int(a.substr(8))
 		elif a.begins_with("--audit="):
 			var au = load("res://harness/audit.gd").new()

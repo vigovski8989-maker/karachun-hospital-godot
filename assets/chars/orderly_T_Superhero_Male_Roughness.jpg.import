@@ -3,9 +3,11 @@
 importer="texture"
 type="CompressedTexture2D"
 uid="uid://bbwb55l0yoj8j"
-path="res://.godot/imported/orderly_T_Superhero_Male_Roughness.jpg-5126eef84a0d4dee39866a49b6446c46.ctex"
+path.s3tc="res://.godot/imported/orderly_T_Superhero_Male_Roughness.jpg-5126eef84a0d4dee39866a49b6446c46.s3tc.ctex"
+path.etc2="res://.godot/imported/orderly_T_Superhero_Male_Roughness.jpg-5126eef84a0d4dee39866a49b6446c46.etc2.ctex"
 metadata={
-"vram_texture": false
+"imported_formats": ["s3tc_bptc", "etc2_astc"],
+"vram_texture": true
 }
 generator_parameters={
 "md5": "a86299a0c369c20be625f256e67631c2"
@@ -14,11 +16,11 @@ generator_parameters={
 [deps]
 
 source_file="res://assets/chars/orderly_T_Superhero_Male_Roughness.jpg"
-dest_files=["res://.godot/imported/orderly_T_Superhero_Male_Roughness.jpg-5126eef84a0d4dee39866a49b6446c46.ctex"]
+dest_files=["res://.godot/imported/orderly_T_Superhero_Male_Roughness.jpg-5126eef84a0d4dee39866a49b6446c46.s3tc.ctex", "res://.godot/imported/orderly_T_Superhero_Male_Roughness.jpg-5126eef84a0d4dee39866a49b6446c46.etc2.ctex"]
 
 [params]
 
-compress/mode=0
+compress/mode=2
 compress/high_quality=false
 compress/lossy_quality=0.7
 compress/uastc_level=0
@@ -39,5 +41,5 @@ process/premult_alpha=false
 process/normal_map_invert_y=false
 process/hdr_as_srgb=false
 process/hdr_clamp_exposure=false
-process/size_limit=0
+process/size_limit=512
 detect_3d/compress_to=1

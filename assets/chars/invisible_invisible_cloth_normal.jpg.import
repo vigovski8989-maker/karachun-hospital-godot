@@ -3,9 +3,11 @@
 importer="texture"
 type="CompressedTexture2D"
 uid="uid://cwsmswjinl25r"
-path="res://.godot/imported/invisible_invisible_cloth_normal.jpg-d58d0877c153e2573e3a8055ee67731d.ctex"
+path.s3tc="res://.godot/imported/invisible_invisible_cloth_normal.jpg-d58d0877c153e2573e3a8055ee67731d.s3tc.ctex"
+path.etc2="res://.godot/imported/invisible_invisible_cloth_normal.jpg-d58d0877c153e2573e3a8055ee67731d.etc2.ctex"
 metadata={
-"vram_texture": false
+"imported_formats": ["s3tc_bptc", "etc2_astc"],
+"vram_texture": true
 }
 generator_parameters={
 "md5": "80ee79b6c95d15c532b11cce66cf1195"
@@ -14,11 +16,11 @@ generator_parameters={
 [deps]
 
 source_file="res://assets/chars/invisible_invisible_cloth_normal.jpg"
-dest_files=["res://.godot/imported/invisible_invisible_cloth_normal.jpg-d58d0877c153e2573e3a8055ee67731d.ctex"]
+dest_files=["res://.godot/imported/invisible_invisible_cloth_normal.jpg-d58d0877c153e2573e3a8055ee67731d.s3tc.ctex", "res://.godot/imported/invisible_invisible_cloth_normal.jpg-d58d0877c153e2573e3a8055ee67731d.etc2.ctex"]
 
 [params]
 
-compress/mode=0
+compress/mode=2
 compress/high_quality=false
 compress/lossy_quality=0.7
 compress/uastc_level=0
@@ -39,5 +41,5 @@ process/premult_alpha=false
 process/normal_map_invert_y=false
 process/hdr_as_srgb=false
 process/hdr_clamp_exposure=false
-process/size_limit=0
+process/size_limit=512
 detect_3d/compress_to=1

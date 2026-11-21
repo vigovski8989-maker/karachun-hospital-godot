@@ -103,7 +103,7 @@ func item_at_tile(x: int, y: int):
 func rebuild() -> void:
 	for c in static_root.get_children(): c.queue_free()
 	for c in dyn_root.get_children(): c.queue_free()
-	doors.clear(); labels.clear(); machine_fx.clear()
+	doors.clear(); labels.clear(); machine_fx.clear(); _stage.clear()
 	var S: Dictionary = sim.S
 	var W: int = S.w
 	var H: int = S.h
@@ -484,6 +484,42 @@ func machine_of(rid, keys: Array):
 	for it in wb.items_nodes[rid]:
 		if str(it.t.get("k", "")) in keys: return it
 	return null
+
+# 0.9.7: pump / inflate staging: patient right beside the machine (sideways to it), doctor on the other side facing
+# the patient and the panel. View-only; cached per machine node.
+var _stage := {}
+func machine_stage(rid, keys: Array):
+	var m = machine_of(rid, keys)
+	if m == null: return null
+	var kid = m.piv.get_instance_id()
+	if _stage.has(kid): return _stage[kid]
+	var T: Transform3D = m.piv.global_transform
+	var c = T * Vector3.ZERO
+	var r0 = sim.roomAt(int(floor(c.x)), int(floor(c.z)))
+	var ok = func(v: Vector3) -> bool:
+		var tx = int(floor(v.x)); var tz = int(floor(v.z))
+		if not sim.walk(tx, tz) or sim.roomAt(tx, tz) != r0: return false
+		var it = item_at_tile(tx, tz)
+		return it == null or it.get("soft") or is_same(it, m.t)
+	var res = null
+	# prefer the patient on the camera-near side (bigger x+z) so the treatment reads from the default camera
+	var sides = [1.0, -1.0]
+	var sx = T.basis.x
+	if sx.x + sx.z < 0: sides = [-1.0, 1.0]
+	for sg in sides:
+		var pp = T * Vector3(.62 * sg, 0, .22)
+		if not ok.call(pp): continue
+		var dd = T * Vector3(-.58 * sg, 0, .58)
+		if not ok.call(dd): dd = T * Vector3(-.62 * sg, 0, .3)
+		if not ok.call(dd): dd = T * Vector3(-.3 * sg, 0, .8)
+		if not ok.call(dd): dd = T * Vector3(.3 * sg, 0, .95)
+		res = {"pat": Vector3(pp.x, 0, pp.z), "doc": Vector3(dd.x, 0, dd.z), "c": Vector3(c.x, 0, c.z), "panel": T * Vector3(-.1 * sg, 1.12, .36), "T": T}
+		break
+	if res == null:
+		var pp2 = T * Vector3(0, 0, .7); var dd2 = T * Vector3(.75, 0, .7)
+		res = {"pat": Vector3(pp2.x, 0, pp2.z), "doc": Vector3(dd2.x, 0, dd2.z), "c": Vector3(c.x, 0, c.z), "panel": T * Vector3(.25, 1.05, .32), "T": T}
+	_stage[kid] = res
+	return res
 
 func _anim_rooms(gdt: float) -> void:
 	if wb == null: return

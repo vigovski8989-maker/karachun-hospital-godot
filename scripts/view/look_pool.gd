@@ -20,7 +20,7 @@ static func roll(e: Dictionary, dis: String, vip: bool) -> Dictionary:
 	# body
 	if dis == "balloonhead": L.glb = "bighead"
 	elif dis == "lostshadow": L.glb = "invisible"
-	elif dis in ["echo", "giggles", "drumheart", "looping", "bagpipelungs", "hiccupclock"]: L.glb = "rocker"
+	# 0.9.7: the rocker suit (white + one purple leg + gold belt) read as a wrong-tinted trouser leg -> not used for patients
 	else:
 		if br < 0.50: L.glb = "patient_a"
 		elif br < 0.76: L.glb = "nurse"
@@ -53,6 +53,7 @@ static func roll(e: Dictionary, dis: String, vip: bool) -> Dictionary:
 		"kid": sc = 0.70 + rng.randf() * 0.1; L.head_k = 1.22
 		"elder": sc *= 0.96; L.stoop = 0.12 + rng.randf() * 0.14
 	L.scale = sc
+	if dis == "balloonhead": L.head_k = 1.8
 	var bd = rng.randf()
 	if L.age != "kid":
 		if bd < 0.17: L.shape = Vector3(1.2 + rng.randf() * 0.08, 1.0, 1.26 + rng.randf() * 0.1)

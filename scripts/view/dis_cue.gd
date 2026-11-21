@@ -405,13 +405,14 @@ static func _emit(p: CharPuppet) -> void:
 		if s.texture == null: return
 		s.billboard = BaseMaterial3D.BILLBOARD_ENABLED; s.shaded = false; s.double_sided = true; s.no_depth_test = true
 		s.top_level = true
-		s.pixel_size = 0.0034 if n == 1 else 0.0024
+		s.pixel_size = 0.0026 if n == 1 else 0.002
 		p.add_child(s)
 		var a = _anchor(p, b.at)
 		s.global_position = a + Vector3(randf_range(-0.05, 0.05) * (n - 1), 0, randf_range(-0.05, 0.05) * (n - 1))
-		var vv = Vector3(randf_range(-0.15, 0.15), 0.55 + 0.1 * i, randf_range(-0.1, 0.1))
-		if key in ["x_gas", "x_anger"]: vv = Vector3(0, 0.3, 0) + (p.global_basis * Vector3(0, 0, 0.5))
-		c.puffs.append({"n": s, "t": 0.0, "v": vv, "life": 1.4})
+		# 0.9.7: puffs stay attached to their patient (offset follows the body), rise only a little and fade quickly
+		var vv = Vector3(randf_range(-0.06, 0.06), 0.22 + 0.05 * i, randf_range(-0.05, 0.05))
+		if key in ["x_gas", "x_anger"]: vv = Vector3(0, 0.12, 0) + (p.global_basis * Vector3(0, 0, 0.25))
+		c.puffs.append({"n": s, "t": 0.0, "v": vv, "life": 1.1, "off": s.global_position - p.global_position})
 
 static func _drop(p: CharPuppet, at: Vector3) -> void:
 	if _drop_mesh == null:
@@ -429,9 +430,12 @@ static func _update_puffs(p: CharPuppet, gdt: float) -> void:
 		var q = L[i]
 		if not is_instance_valid(q.n): L.remove_at(i); continue
 		q.t += gdt
-		q.n.global_position += q.v * gdt
+		if q.has("off"):
+			q.off += q.v * gdt
+			q.n.global_position = p.global_position + q.off
+		else: q.n.global_position += q.v * gdt
 		if not q.get("drop", false):
 			q.n.modulate.a = clampf((q.life - q.t) / 0.5, 0.0, 1.0)
-			q.n.pixel_size *= 1.0 + gdt * 0.25
+			q.n.pixel_size *= 1.0 + gdt * 0.1
 		if q.t >= q.life:
 			q.n.queue_free(); L.remove_at(i)
