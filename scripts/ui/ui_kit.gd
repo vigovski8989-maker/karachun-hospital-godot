@@ -15,13 +15,18 @@ const C_PANEL := Color(0.10, 0.17, 0.23, 0.96)
 const C_BAR := Color(15 / 255.0, 25 / 255.0, 32 / 255.0, 0.85)
 const C_GOLD := Color("#ffd24a")
 
+static func _ff(path: String) -> FontFile:
+	# 0.9.8: load the imported font resource (exported builds contain only the .fontdata, not the raw file)
+	var f = load(path) as FontFile
+	if f: return f.duplicate()
+	f = FontFile.new()
+	if FileAccess.file_exists(path): f.load_dynamic_font(path)
+	return f
+
 static func _font(w: int) -> Font:
-	var lat = FontFile.new()
-	lat.load_dynamic_font("res://assets/fonts/nunito-latin-%d.woff2" % w)
-	var cyr = FontFile.new()
-	cyr.load_dynamic_font("res://assets/fonts/nunito-cyrillic-%d.woff2" % w)
-	var emo = FontFile.new()
-	emo.load_dynamic_font("res://assets/fonts/TwemojiMozilla.ttf")
+	var lat = _ff("res://assets/fonts/nunito-latin-%d.woff2" % w)
+	var cyr = _ff("res://assets/fonts/nunito-cyrillic-%d.woff2" % w)
+	var emo = _ff("res://assets/fonts/TwemojiMozilla.ttf")
 	var sysf = SystemFont.new()
 	sysf.font_names = PackedStringArray(["Noto Color Emoji", "Segoe UI Emoji", "Segoe UI Symbol", "Noto Sans Symbols 2", "DejaVu Sans", "sans-serif"])
 	lat.fallbacks = [cyr, emo, sysf]
