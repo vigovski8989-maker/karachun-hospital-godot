@@ -311,6 +311,7 @@ var head_scale = 1.0
 var pill: Node3D
 var shock_t = 0.0
 var sep_off = Vector3.ZERO
+const CHAIRS := ["chair_plain", "chair_office", "elchair", "chair", "sofa", "armchair"]
 var loose_off = Vector3.ZERO
 var seated = false
 var greet_at = null
@@ -380,6 +381,7 @@ func _nearest_free(sim, view, pos: Vector3, prefer) -> Vector3:
 			if not sim.walk(x, z): continue
 			var it = view.item_at_tile(x, z)
 			if it != null and not it.get("soft") and str(it.k) != "plant": continue
+			if it != null and str(it.k) in CHAIRS: continue
 			var c = Vector3(x + .5, 0, z + .5)
 			# closest point of the tile to pos (stay near the item edge, not tile centre)
 			var q = Vector3(clampf(pos.x, x + .3, x + .7), 0, clampf(pos.z, z + .3, z + .7))
@@ -1079,6 +1081,8 @@ func sync(sim, e: Dictionary, gdt: float, view) -> void:
 		var tx = int(floor(tgt.x)); var tz = int(floor(tgt.z))
 		var it = view.item_at_tile(tx, tz)
 		var bad = it != null and not it.get("soft") and str(it.k) != "plant"
+		# 0.9.8.1: soft chairs are walkable in the sim (a seat spot sits on them) but nobody may stand or walk inside one
+		if it != null and str(it.k) in CHAIRS and not seated: bad = true
 		if bad:
 			tgt = _nearest_free(sim, view, tgt, _last_free)
 			if anim == "Walk" or anim == "Walk_Formal": anim = "Idle"
@@ -1273,7 +1277,19 @@ func _aim(bi: int, ci: int, T: Vector3, w: float) -> void:
 	var v2 = T - g.origin
 	if v1.length() < 1e-4 or v2.length() < 1e-4: return
 	var q = Quaternion.IDENTITY.slerp(Quaternion(v1.normalized(), v2.normalized()), clampf(w, 0, 1))
-	skel.set_bone_global_pose(bi, Transform3D(Basis(q) * g.basis, g.origin))
+	rot_global(skel, bi, q)
+
+# 0.9.8.1: apply a skeleton-space rotation to a bone by changing ONLY its local rotation.
+# set_bone_global_pose() re-decomposed the (parent-scaled) basis every frame; the error went into the bone's pose SCALE,
+# which the animation never rewrites, so arm bones grew without bound (seated patients' arms reached 1e17 m:
+# the long "wing" planks seen on Adreno phones). Rotation-only keeps scale untouched and normalised.
+static func rot_global(sk: Skeleton3D, bi: int, q: Quaternion) -> void:
+	if not q.is_finite(): return
+	var par = sk.get_bone_parent(bi)
+	var P: Basis = sk.get_bone_global_pose(par).basis.orthonormalized() if par >= 0 else Basis()
+	var ql = Quaternion(P.inverse() * Basis(q.normalized()) * P)
+	var nr = (ql * sk.get_bone_pose_rotation(bi)).normalized()
+	if nr.is_finite(): sk.set_bone_pose_rotation(bi, nr)
 
 func _patient_in_room(sim, s: Dictionary) -> bool:
 	var r = sim.room_by_id(s.get("room"))

@@ -110,7 +110,7 @@ func rebuild() -> void:
 	var tmp = Node3D.new()
 	static_root.add_child(tmp)
 	# ground beyond the 8-tile grass margin
-	var g = MeshInstance3D.new(); var gp = PlaneMesh.new(); gp.size = Vector2(W + 80, H + 80)
+	var g = MeshInstance3D.new(); var gp = PlaneMesh.new(); gp.size = Vector2(W + 500, H + 500)
 	g.mesh = gp; g.material_override = mats.grass; g.position = Vector3(W / 2.0, -0.03, H / 2.0)
 	g.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
 	static_root.add_child(g)
@@ -268,9 +268,10 @@ func _make_puppet(e: Dictionary, staff: bool) -> CharPuppet:
 		bl.position = Vector3(0, 2.0, 0)
 		p.add_child(bl)
 		p.badge = bl
-	if glb == "invisible":
+	if dis_look == "lostshadow":
 		for mi in p.find_children("*", "MeshInstance3D", true, false):
-			if not "Clothes" in str(mi.name): mi.visible = false
+			var mn = str(mi.name)
+			if not ("Clothes" in mn or mn.begins_with("Uniform_")): mi.visible = false
 		p.attach_prop("hat", _hat(), "Head", Vector3(0, 0.16, 0))
 		p.attach_prop("glasses", _glasses(), "Head", Vector3(0, 0.09, 0.105))
 	if staff and e.type == "receptionist":

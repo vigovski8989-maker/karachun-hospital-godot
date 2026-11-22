@@ -18,13 +18,12 @@ static func roll(e: Dictionary, dis: String, vip: bool) -> Dictionary:
 	L.age = "kid" if ar < 0.10 else ("elder" if ar < 0.30 else "adult")
 	var br = rng.randf()
 	# body
-	if dis == "balloonhead": L.glb = "bighead"
-	elif dis == "lostshadow": L.glb = "invisible"
+	# 0.9.8.1: the body never depends on the disease, so a patient keeps the same look before and after treatment
+	# (balloonhead = the patient's own body with a scaled head bone; lostshadow = own clothes with the body hidden).
 	# 0.9.7: the rocker suit (white + one purple leg + gold belt) read as a wrong-tinted trouser leg -> not used for patients
-	else:
-		if br < 0.50: L.glb = "patient_a"
-		elif br < 0.76: L.glb = "nurse"
-		else: L.glb = "receptionist"
+	if br < 0.50: L.glb = "patient_a"
+	elif br < 0.76: L.glb = "nurse"
+	else: L.glb = "receptionist"
 	if OS.get_environment("LOOK_GLB") != "": L.glb = OS.get_environment("LOOK_GLB")
 	L.female = L.glb in ["nurse", "receptionist"]
 	# outfit

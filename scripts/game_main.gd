@@ -200,7 +200,7 @@ func _env() -> void:
 	env = WorldEnvironment.new()
 	var e = Environment.new()
 	e.background_mode = Environment.BG_COLOR
-	e.background_color = Color("#1d2a33")
+	e.background_color = Color("#6f9a55")   # 0.9.8.1: grass-coloured beyond the ground plane
 	e.ambient_light_source = Environment.AMBIENT_SOURCE_COLOR
 	e.ambient_light_color = Color(0.78, 0.82, 0.88)
 	e.ambient_light_energy = 0.55
@@ -253,9 +253,27 @@ func set_gfx(q: String, persist := true) -> void:
 	if persist: _save_settings()
 
 # ---------- loop ----------
+# --bootcheck: also scan every puppet skeleton for runaway bone transforms (NaN, scale drift, bones far from the body)
+func _bone_report() -> void:
+	var worst = 0.0; var wname = ""; var nan = 0; var far = 0.0; var fname = ""; var n = 0
+	for id in view.puppets:
+		var p = view.puppets[id]
+		if not is_instance_valid(p) or p.skel == null: continue
+		n += 1
+		var sk: Skeleton3D = p.skel
+		for bi in sk.get_bone_count():
+			var sc: Vector3 = sk.get_bone_pose_scale(bi)
+			var o: Vector3 = sk.get_bone_global_pose(bi).origin
+			if is_nan(sc.x + sc.y + sc.z + o.x + o.y + o.z): nan += 1; continue
+			var dev = maxf(maxf(absf(sc.x - 1.0), absf(sc.y - 1.0)), absf(sc.z - 1.0))
+			if dev > worst and not sk.get_bone_name(bi) in ["head", "spine_03"]: worst = dev; wname = "%s/%s %s dis=%s" % [p.kind, sk.get_bone_name(bi), sc, p.dis_k]
+			if o.length() > far: far = o.length(); fname = "%s/%s dis=%s" % [p.kind, sk.get_bone_name(bi), p.dis_k]
+	print("BONES puppets ", n, " nan ", nan, " worst_scale_dev ", snappedf(worst, 0.0001), " ", wname, " farthest ", snappedf(far, 0.01), " ", fname)
+
 func _process(delta: float) -> void:
 	if boot_check and Engine.get_process_frames() % 300 == 0:
 		print("BOOT_OK frame ", Engine.get_process_frames(), " game ", not sim.S.is_empty(), " day ", sim.S.get("day", -1), " pats ", sim.S.get("pats", []).size(), " rooms ", sim.S.get("rooms", []).size(), " puppets ", get_tree().get_nodes_in_group("puppet").size(), " nodes ", get_tree().get_node_count())
+	if boot_check and Engine.get_process_frames() % 300 == 150: _bone_report()
 	if sim.S.is_empty(): return
 	var dt = minf(delta, 0.1)
 	if auto_play and ap:

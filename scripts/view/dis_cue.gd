@@ -271,8 +271,7 @@ static func _rot(p: CharPuppet, bone: String, axis: Vector3, ang: float) -> void
 	if gi < 0 or absf(ang) < 0.0005: return
 	var sv: Dictionary = p.rot_saved
 	var base: Quaternion = sv[gi][0] if sv.has(gi) else sk.get_bone_pose_rotation(gi)
-	var g: Transform3D = sk.get_bone_global_pose(gi)
-	sk.set_bone_global_pose(gi, Transform3D(Basis(axis, ang) * g.basis, g.origin))
+	CharPuppet.rot_global(sk, gi, Quaternion(axis.normalized(), ang))
 	sv[gi] = [base, sk.get_bone_pose_rotation(gi)]
 
 static func bones(p: CharPuppet) -> void:

@@ -27,7 +27,7 @@ func _ready() -> void:
 	# portrait phones: the ortho size is the visible WIDTH (in metres), the tall screen shows more depth
 	keep_aspect = Camera3D.KEEP_WIDTH
 	near = 0.1
-	far = 200.0
+	far = 600.0
 	apply()
 
 func get_focus() -> Vector3: return focus
