@@ -33,6 +33,7 @@ var start_lv = -1
 var dbg_ui = ""
 var dbg_zoom = 0.0
 var boot_check = false
+var dbg_mess = 0
 var dbg_focus = ""
 var dbg_watch = ""
 var dbg_demo = ""
@@ -147,6 +148,7 @@ func _ready() -> void:
 func _parse_args() -> void:
 	for a in OS.get_cmdline_user_args():
 		if a == "--bootcheck": boot_check = true
+		elif a.begins_with("--mess="): dbg_mess = int(a.substr(7))
 		if a.begins_with("--shot="): shot_path = a.substr(7)
 		elif a.begins_with("--frames="): shot_frames = int(a.substr(9))
 		elif a == "--auto": auto_play = true
@@ -271,6 +273,18 @@ func _bone_report() -> void:
 	print("BONES puppets ", n, " nan ", nan, " worst_scale_dev ", snappedf(worst, 0.0001), " ", wname, " farthest ", snappedf(far, 0.01), " ", fname)
 
 func _process(delta: float) -> void:
+	# debug-only (screenshots): every 1.5 s a waiting patient in the hall drops litter / is sick next to themselves
+	if dbg_mess > 0 and sim and not sim.S.is_empty() and Engine.get_process_frames() % 90 == 45:
+		var cand = sim.S.pats.filter(func(q): return not (q.state in ["treat", "dead", "leave"]) and not q.get("vs"))
+		for _k in 3:
+			if cand.is_empty() or dbg_mess <= 0: break
+			var q = cand[randi() % cand.size()]
+			var l = {"x": float(q.x) + randf_range(-.3, .3), "y": float(q.y) + randf_range(-.3, .3)}
+			if dbg_focus != "" and cam:
+				var fx = cam.focus.x - 0.5 + randf_range(-1.5, 1.5); var fz = cam.focus.z - 0.5 + randf_range(-1.5, 1.5)
+				if sim.walk(int(round(fx)), int(round(fz))): l = {"x": fx, "y": fz}
+			if dbg_mess % 3 == 0: l.v = 1
+			sim.S.litter.append(l); dbg_mess -= 1
 	if boot_check and Engine.get_process_frames() % 300 == 0:
 		print("BOOT_OK frame ", Engine.get_process_frames(), " game ", not sim.S.is_empty(), " day ", sim.S.get("day", -1), " pats ", sim.S.get("pats", []).size(), " rooms ", sim.S.get("rooms", []).size(), " puppets ", get_tree().get_nodes_in_group("puppet").size(), " nodes ", get_tree().get_node_count())
 	if boot_check and Engine.get_process_frames() % 300 == 150: _bone_report()

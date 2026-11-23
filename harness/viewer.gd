@@ -115,6 +115,7 @@ func _tick():
 	frames += 1
 	for p in pups:
 		p.play(p.get_meta("anim"))
+		if p.get_meta("anim") == "Walk": p.vel = p.global_basis * Vector3(0, 0, 1.0)
 		p.ap.advance(0.05)
 		if p.model and p.get_meta("seat_h") <= 0: p.model.position.y = 0.0
 		if not p.cue.is_empty(): DisCue.tick(p, 0.05, p.get_meta("anim") == "Walk")

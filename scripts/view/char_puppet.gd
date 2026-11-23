@@ -391,6 +391,21 @@ func _nearest_free(sim, view, pos: Vector3, prefer) -> Vector3:
 	return best
 var _vs_side = Vector3.ZERO
 var _vs_side_ref = null
+var _vs_pts = []
+var _vs_pts_ref = null
+var _chair_piv = null
+var _chair_ref = null
+func _chair_slide(view, vs, A: Vector3, f: Vector3, amt: float) -> void:
+	if view == null or view.wb == null: return
+	if not is_same(_chair_ref, vs):
+		_chair_ref = vs; _chair_piv = null
+		for rid in view.wb.items_nodes:
+			for it in view.wb.items_nodes[rid]:
+				if int(it.t.x) == int(floor(A.x)) and int(it.t.y) == int(floor(A.z)) and str(it.t.get("k", "")) in ["chair_plain", "chair_office", "chair"]:
+					_chair_piv = it.piv
+		if _chair_piv and not _chair_piv.has_meta("p0"): _chair_piv.set_meta("p0", _chair_piv.position)
+	if _chair_piv == null or not is_instance_valid(_chair_piv): return
+	_chair_piv.position = _chair_piv.get_meta("p0") - f * amt
 
 # chairs pulled up to a desk/counter: the tile in front is solid, so get in from the side (free floor, same room)
 func _side_approach(sim, view, A: Vector3, f: Vector3) -> Vector3:
@@ -467,9 +482,12 @@ func _bed_side(sim, b) -> int:
 		var pref = (1 if cx >= t.x + fp[0] / 2.0 else -1) if az else (1 if cy >= t.y + fp[1] / 2.0 else -1)
 		sd = pref if ok.call(pref) else (-pref if ok.call(-pref) else 0)
 	_bed_sides[key] = sd
+	if OS.get_environment("DBG_BED") != "": print("BEDSIDE ", t.k, " ", t.x, ",", t.y, " fp ", t.get("fp") if t.get("fp") else sim.fpOf(t.k), " sd ", sd)
 	return sd
 
-func _bed_pose(sim, b, sp, L: float, cur: Vector3) -> Dictionary:
+var _bed_path = []
+var _bed_path_vs = null
+func _bed_pose(sim, b, sp, L: float, cur: Vector3, view = null) -> Dictionary:
 	# 0.9.4: walk to the bed side (near the middle), sit on the edge with the back to the mattress, then swing the legs in
 	# while lying back: yaw turns onto the bed's long axis, legs straighten (leg bones -> rest) in sync with the tilt.
 	var t = b.t
@@ -487,8 +505,14 @@ func _bed_pose(sim, b, sp, L: float, cur: Vector3) -> Dictionary:
 	var o = {"pos": cur, "yaw": yaw_out, "anim": "Sitting_Idle", "spd": 1.0, "lie": 0.0, "w": 0.0}
 	if L < .4:
 		var a = L / .4
-		var K = P0.lerp(Ss, .5) + sv * .25
-		o.pos = _polyline([P0, K, Ss], ease01(a))
+		# 0.9.9: approach tile on the far side / at the foot end -> walk around the bed, never across it
+		if not is_same(_bed_path_vs, _vs_ref):
+			_bed_path_vs = _vs_ref
+			var K = P0.lerp(Ss, .5) + sv * .25
+			_bed_path = [P0, K, Ss]
+			if view and not (_nav_los(view, P0, K, Vector2i(-99, -99)) and _nav_los(view, K, Ss, Vector2i(-99, -99))):
+				_bed_path = [P0] + _nav_plan(view, P0, Ss)
+		o.pos = _polyline(_bed_path, ease01(a))
 		var dv = o.pos - position
 		o.anim = "Walk"; o.spd = 1.1
 		if a > .9:
@@ -551,6 +575,77 @@ var vw_home = Vector3.ZERO
 var vw_arrived = false
 var vw_arr_t = 0.0
 var vw_home_pts = []
+
+# ---------- 0.9.9 visual navigation (view-only; the sim position is untouched) ----------
+var nav_pos = null
+var retch_t = 0.0
+var mop_node: Node3D
+static var _dbg_thru = OS.get_environment("DBG_THRU") != ""
+var vel = Vector3.ZERO
+var _prev_tgt = Vector3.INF
+var nav_pts = []
+var nav_goal = Vector2i(-9999, -9999)
+var nav_replan = 0.0
+func _nav_los(view, a: Vector3, b: Vector3, skip: Vector2i) -> bool:
+	var n = int(ceil(a.distance_to(b) / 0.15))
+	for i in range(1, n + 1):
+		var q = a.lerp(b, float(i) / n)
+		for o in [Vector3.ZERO, Vector3(.2, 0, 0), Vector3(-.2, 0, 0), Vector3(0, 0, .2), Vector3(0, 0, -.2)]:
+			var t = Vector2i(int(floor(q.x + o.x)), int(floor(q.z + o.z)))
+			if t != skip and view.nav_blocked(t.x, t.y): return false
+	return true
+func _nav_plan(view, a: Vector3, b: Vector3) -> Array:
+	var st = Vector2i(int(floor(a.x)), int(floor(a.z))); var gl = Vector2i(int(floor(b.x)), int(floor(b.z)))
+	var prev = {st: st}; var q = [st]; var i = 0
+	while i < q.size() and i < 600:
+		var c: Vector2i = q[i]; i += 1
+		if c == gl: break
+		for d in [Vector2i(1, 0), Vector2i(-1, 0), Vector2i(0, 1), Vector2i(0, -1)]:
+			var nx = c + d
+			if prev.has(nx): continue
+			if nx != gl and view.nav_blocked(nx.x, nx.y): continue
+			prev[nx] = c; q.append(nx)
+	if not prev.has(gl): return [b]
+	var pts = [b]; var k = prev[gl]
+	while k != st:
+		pts.push_front(Vector3(k.x + .5, 0, k.y + .5)); k = prev[k]
+	# string-pull
+	var out = []; var cur = a; var j = 0
+	while j < pts.size():
+		var far = j
+		for m in range(pts.size() - 1, j, -1):
+			if _nav_los(view, cur, pts[m], st): far = m; break
+		out.append(pts[far]); cur = pts[far]; j = far + 1
+	return out
+func _nav(_sim, view, desired: Vector3, gdt: float) -> Vector3:
+	var dtx = int(floor(desired.x)); var dtz = int(floor(desired.z))
+	if view.item_at_tile(dtx, dtz) != null and view.nav_blocked(dtx, dtz):
+		var dy = desired.y
+		desired = _nearest_free(_sim, view, desired, _last_free); desired.y = dy
+	if nav_pos == null:
+		nav_pos = position - sep_off; nav_pos.y = desired.y
+		if nav_pos.distance_to(desired) > 3.0: nav_pos = desired
+	var d = nav_pos.distance_to(desired)
+	if d > 4.5: nav_pos = desired; nav_pts = []; return desired
+	var here = Vector2i(int(floor(nav_pos.x)), int(floor(nav_pos.z)))
+	var gt = Vector2i(int(floor(desired.x)), int(floor(desired.z)))
+	nav_replan -= gdt
+	if _nav_los(view, nav_pos, desired, here):
+		nav_pts = [desired]
+	elif nav_pts.is_empty() or gt != nav_goal or nav_replan <= 0.0:
+		nav_pts = _nav_plan(view, nav_pos, desired); nav_goal = gt; nav_replan = 0.4
+	else:
+		nav_pts[nav_pts.size() - 1] = desired
+	var left = (1.5 + clampf(d - 0.4, 0.0, 1.5)) * gdt
+	while left > 0.0 and not nav_pts.is_empty():
+		var nx: Vector3 = nav_pts[0]
+		var dd = nav_pos.distance_to(nx)
+		if dd <= left:
+			nav_pos = nx; left -= dd; nav_pts.pop_front()
+		else:
+			nav_pos += (nx - nav_pos) / dd * left; left = 0.0
+	nav_pos.y = desired.y
+	return nav_pos
 
 func _tile_pts(sim, from: Vector3, gx: int, gy: int) -> Array:
 	var pth = sim.path(int(floor(from.x)), int(floor(from.z)), gx, gy)
@@ -664,8 +759,12 @@ func _vw_go_scanner(sim, view, home: Vector3, r) -> bool:
 		return true
 	return false
 
-func _vw_go_home(_sim, home: Vector3) -> void:
+func _vw_go_home(_sim, home: Vector3, view = null) -> void:
 	vw_goal = "home"; vw_arrived = false
+	# 0.9.9: re-plan the way back from where the body really is (the staff spot may have moved): never through a counter
+	if view and vw_pos != null:
+		vw_pts = _nav_plan(view, vw_pos, home)
+		return
 	vw_pts = vw_home_pts.duplicate() if not vw_home_pts.is_empty() else [home]
 	if vw_pts.size() > 0: vw_pts[vw_pts.size() - 1] = home
 
@@ -721,6 +820,33 @@ static func procQ(p) -> float:
 	var T: float = p.get("tT") if p.get("tT") else maxf(0.001, float(p.get("t", 1.0)))
 	return clampf(1.0 - float(p.t) / T, 0.0, 1.0)
 
+# 0.9.9: janitor's mop: grip in the right hand, the head wipes the floor left-right in front of the feet
+func _mop() -> Node3D:
+	if mop_node == null:
+		mop_node = Node3D.new()
+		Geo.cyl(mop_node, 0.014, 0.014, 1.3, Geo.mat(Color(0.55, 0.4, 0.25), 0.6), Vector3(0, -0.65, 0), 6)
+		var hm = Geo.mat(Color(0.86, 0.86, 0.8), 0.95)
+		Geo.box(mop_node, Vector3(0.34, 0.05, 0.1), Geo.mat(Color(0.2, 0.45, 0.8), 0.5), Vector3(0, -1.3, 0), 0.01)
+		for i in 11: Geo.box(mop_node, Vector3(0.03, 0.09, 0.11), hm, Vector3(-0.15 + i * 0.03, -1.37, 0.01 * (i % 2)), 0.01)
+		mop_node.top_level = true
+		add_child(mop_node)
+	return mop_node
+func _mop_place() -> void:
+	var hi = skel.find_bone("hand_r")
+	if hi < 0: return
+	var hand: Vector3 = skel.global_transform * skel.get_bone_global_pose(hi).origin
+	var f: Vector3 = global_basis * Vector3(0, 0, 1)
+	var r: Vector3 = -global_basis.x
+	var T = Time.get_ticks_msec() / 1000.0
+	var tip: Vector3 = global_position + f * 0.75 + r * (0.3 * sin(T * 3.2 + float(eid)))
+	tip.y = 0.06
+	var v: Vector3 = hand - tip
+	var y: Vector3 = v.normalized()
+	var x: Vector3 = y.cross(f).normalized()
+	if x.length() < 0.01: x = r
+	var z: Vector3 = x.cross(y).normalized()
+	mop_node.global_transform = Transform3D(Basis(x, y * (v.length() / 1.36), z), hand)
+
 func _pill() -> Node3D:
 	if pill == null:
 		pill = Node3D.new()
@@ -758,6 +884,8 @@ func sync(sim, e: Dictionary, gdt: float, view) -> void:
 	var want_mask = false
 	var hose_to = null
 	var show_tube = false
+	var want_mop = false
+	retch_t = maxf(0.0, retch_t - gdt)
 	reach_r = Vector3.INF; reach_world = Vector3.INF; reach_w = 0.0; reach_left = false; clip_w = 0.0
 	seated = vs != null
 	lab_sit = false
@@ -779,7 +907,7 @@ func sync(sim, e: Dictionary, gdt: float, view) -> void:
 			var bk = str(b.t.get("k")) if b else ""
 			if b and (bk.begins_with("bed") or bk == "scanner") and _bed_side(sim, b) != 0:
 				# v43 bed: walk to the bed side, sit on the edge (back to the bed), swing in and lie down; reverse to get up
-				var r = _bed_pose(sim, b, sp, lk, tgt)
+				var r = _bed_pose(sim, b, sp, lk, tgt, view)
 				tgt = r.pos; yaw = r.yaw; anim = r.anim; spd = r.spd; want_lie = r.lie; lie_h = MATT_H.get(bk, .61)
 				_seat_w = r.w; _seat_h = lie_h - .05
 				lie_direct = true
@@ -839,6 +967,15 @@ func sync(sim, e: Dictionary, gdt: float, view) -> void:
 				if k < .42:
 					var a2 = ease01(k / .42)
 					var pts = [_vs_from, Sx] if _vs_via == Vector3.INF else [_vs_from, _vs_via, Sx]
+					# 0.9.9: the walk to the seat goes around furniture (desks, counters, scanners, benches)
+					if not is_same(_vs_pts_ref, vs):
+						_vs_pts_ref = vs; _vs_pts = pts
+						if view:
+							var clear = true
+							for i in range(1, pts.size()):
+								if not _nav_los(view, pts[i - 1], pts[i], Vector2i(int(floor(_vs_from.x)), int(floor(_vs_from.z)))): clear = false
+							if not clear: _vs_pts = [_vs_from] + _nav_plan(view, _vs_from, Sx)
+					pts = _vs_pts
 					tgt = _polyline(pts, a2)
 					var dv = tgt - position
 					var walking = (tgt - Sx).length() > .05
@@ -851,11 +988,14 @@ func sync(sim, e: Dictionary, gdt: float, view) -> void:
 					tgt = Sx.lerp(M, b2); yaw = syaw
 					anim = "Sitting_Enter"; spd = _clip_len("Sitting_Enter") / maxf(.2, T * .58)
 					_seat_w = b2
+					_chair_slide(view, vs, A, f, 0.2 * sin(PI * b2))
 			elif vs.ph == "up":
 				yaw = syaw
 				anim = "Sitting_Exit"; spd = _clip_len("Sitting_Exit") / maxf(.2, T * .8)
 				tgt = M if k < .3 else M.lerp(Sx, ease01((k - .3) / .45))
 				_seat_w = 1.0 - ease01(k / .75)
+				# 0.9.9: the chair slides back as the patient rises, so they step out in front of it, then it is pushed back in
+				_chair_slide(view, vs, A, f, 0.26 * (ease01(k / .35) if k < .6 else 1.0 - ease01((k - .6) / .4)))
 			else:
 				tgt = M; yaw = syaw; _seat_w = 1.0
 				anim = "Sitting_Idle"
@@ -869,7 +1009,7 @@ func sync(sim, e: Dictionary, gdt: float, view) -> void:
 	elif e.get("turning"):
 		anim = "Walk"; spd = 0.5
 	elif is_staff and e.get("mop"):
-		anim = "Push"
+		anim = "Push"; want_mop = true
 	elif is_staff and e.type == "handyman" and st == "do":
 		anim = "Fixing_Kneeling"
 	elif is_staff and e.type == "orderly" and st == "pick":
@@ -926,7 +1066,7 @@ func sync(sim, e: Dictionary, gdt: float, view) -> void:
 								reach_left = lp.x > 0.0
 								reach_w = ease01(vw_arr_t / .4) * ease01((qq - .16) / .08) * (1.0 - ease01((qq - .78) / .06))
 							clip_w = ease01(vw_arr_t / .4)
-					elif vw_goal == "pat": _vw_go_home(sim, tgt)
+					elif vw_goal == "pat": _vw_go_home(sim, tgt, view)
 				"diag", "xray", "cardio", "electro", "reboot", "genetics":
 					# explain -> operate the console/machine -> report back
 					anim = "Interact" if qq > .18 and qq < .82 else "Idle_Talking"
@@ -938,7 +1078,7 @@ func sync(sim, e: Dictionary, gdt: float, view) -> void:
 							if vw_goal == "pat" and vw_arrived and vw_face != Vector3.INF:
 								var df = vw_face - (vw_pos if vw_pos != null else tgt)
 								yaw = lerp_angle(rotation.y, atan2(df.x, df.z), minf(1.0, gdt * 6.0 + 0.05))
-						elif vw_goal == "pat": _vw_go_home(sim, tgt)
+						elif vw_goal == "pat": _vw_go_home(sim, tgt, view)
 				"lab":
 					# 0.9.4: the nurse walks round the counter to the patient's right side, draws blood there, walks back
 					anim = "Idle_Talking"
@@ -955,7 +1095,7 @@ func sync(sim, e: Dictionary, gdt: float, view) -> void:
 							show_tube = vw_arr_t > .5
 							reach_world = hw + Vector3(0, .06, 0)
 							reach_w = ease01(vw_arr_t / .5) * ease01((qq - .14) / .08) * (1.0 - ease01((qq - .74) / .08))
-					elif vw_goal == "pat": _vw_go_home(sim, tgt)
+					elif vw_goal == "pat": _vw_go_home(sim, tgt, view)
 				"ward", "icu", "derma":
 					anim = "Interact" if fmod(qq * 3.0, 1.0) < .35 else "Idle"
 				_:
@@ -1089,7 +1229,7 @@ func sync(sim, e: Dictionary, gdt: float, view) -> void:
 		else:
 			_last_free = tgt
 	if vw_pos != null:
-		if vw_goal == "pat" and not (is_staff and (st == "work" or st == "idle")): _vw_go_home(sim, tgt)
+		if vw_goal == "pat" and not (is_staff and (st == "work" or st == "idle")): _vw_go_home(sim, tgt, view)
 		if vw_goal == "home" and vw_pts.is_empty(): vw_pts = [tgt]
 		var mv = _vw_step(gdt)
 		if mv.length() > 0.0005:
@@ -1106,9 +1246,28 @@ func sync(sim, e: Dictionary, gdt: float, view) -> void:
 		lw = Vector3((float(hsh % 10) / 9.0 - 0.5) * 0.7, 0, 0.5 + float(hsh / 10 % 10) / 9.0 * 1.6)
 	loose_off = loose_off.lerp(lw, minf(1.0, gdt * 1.5))
 	tgt += loose_off
+	# 0.9.9: shared visual collision layer: the body follows the sim position but never cuts through furniture
+	if vs == null and lie_k < 0.05 and vw_pos == null and st != "dead" and view and e.get("body") == null:
+		var np = _nav(sim, view, tgt, gdt)
+		var dvn: Vector3 = np - position
+		if np.distance_to(tgt) > 0.12 and Vector2(dvn.x, dvn.z).length() > 0.25 * gdt:
+			if not anim.begins_with("Walk") and anim != "Jog_Fwd": anim = "Walk_Formal" if kind == "doctor" else "Walk"; spd = 0.9
+			yaw = lerp_angle(rotation.y, atan2(dvn.x, dvn.z), minf(1.0, gdt * 10.0 + 0.1))
+		tgt = np
+	else:
+		nav_pos = null; nav_pts = []
+	if gdt > 0.0001: vel = vel.lerp((tgt - _prev_tgt) / gdt, minf(1.0, gdt * 8.0)) if _prev_tgt != Vector3.INF else Vector3.ZERO
+	_prev_tgt = tgt
 	position = tgt
+	if _dbg_thru and view and ((vs == null and lie_k < 0.05 and _seat_w < 0.05) or (vs != null and anim.begins_with("Walk"))) and st != "dead" and e.get("body") == null:
+		var bx = int(floor(tgt.x)); var bz = int(floor(tgt.z))
+		if view.nav_blocked(bx, bz):
+			var bi = view.item_at_tile(bx, bz)
+			print("THRU ", kind, " ", st, " ", bi.k if bi else "wall", " vw ", vw_pos != null, " vs ", vs.pose + ":" + vs.ph if vs else "-")
+			if OS.get_environment("DBG_THRU") == "2": print("  THRUD id ", eid, " tgt ", tgt, " e ", e.x, ",", e.y, " navpts ", nav_pts, " anim ", anim, " lie ", lie_k, " sw ", _seat_w, " path ", e.get("path"))
 	rotation.y = yaw
 	if show_pill or pill: _pill().visible = show_pill
+	if want_mop or mop_node: _mop().visible = want_mop
 	if show_tube or tube: _tube().visible = show_tube
 	if want_mask or mask: _mask().visible = want_mask
 	if clip_w > 0.01 or clip_l or clip_r:
@@ -1129,7 +1288,8 @@ func sync(sim, e: Dictionary, gdt: float, view) -> void:
 		acc = 0.0
 		if lie_k > 0.001: _straighten_legs(lie_k)
 		elif _seat_w > 0.6 and cur == "Sitting_Idle" and reach_w < 0.01: _sit_tweak(ease01((_seat_w - 0.6) / 0.4))
-		if not cue.is_empty() or stoop != 0.0 or shape != Vector3.ONE or head_k != 1.0: DisCue.pose(self)
+		if not cue.is_empty() or stoop != 0.0 or shape != Vector3.ONE or head_k != 1.0 or retch_t > 0.0: DisCue.pose(self)
+		if mop_node and mop_node.visible: _mop_place()
 		elif is_staff and not moving and lie_k < 0.01 and cur in [anim_name("Idle"), anim_name("Idle_Talking")]: _narrow_legs()
 		if reach_w > 0.01:
 			var tw = reach_world if reach_world != Vector3.INF else (global_transform * reach_r if reach_r != Vector3.INF else Vector3.INF)

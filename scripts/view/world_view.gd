@@ -17,6 +17,13 @@ var sig = ""
 var mats = {}
 var litter_mm: MultiMeshInstance3D
 var vomit_mm: MultiMeshInstance3D
+var vomit2_mm: MultiMeshInstance3D
+var cup_mm: MultiMeshInstance3D
+var paper_mm: MultiMeshInstance3D
+var _lit_seen = {}
+var _lit_init = false
+var _lit_sig = ""
+var _fx = []
 var cam: Camera3D
 var labels = {}
 var machine_fx = {}
@@ -27,17 +34,31 @@ func _ready() -> void:
 	dyn_root = Node3D.new(); dyn_root.name = "Dyn"; add_child(dyn_root)
 	chars_root = Node3D.new(); chars_root.name = "Chars"; add_child(chars_root)
 	_mats()
-	litter_mm = _mk_mm(Color(0.55, 0.5, 0.42), Vector3(0.22, 0.02, 0.16))
-	vomit_mm = _mk_mm(Color(0.6, 0.68, 0.18), Vector3(0.38, 0.015, 0.3))
+	# 0.9.9: litter is a mix of sweet wrappers, paper cups and crumpled paper; vomit is a wet splat with chunks
+	litter_mm = _mk_mm(Color.WHITE, Vector3(0.13, 0.008, 0.09), true)
+	var cm = CylinderMesh.new(); cm.top_radius = 0.038; cm.bottom_radius = 0.03; cm.height = 0.1; cm.radial_segments = 10; cm.rings = 1
+	cup_mm = _mk_mm(Color(0.95, 0.95, 0.93), Vector3.ONE, false, cm)
+	var sm = SphereMesh.new(); sm.radius = 0.045; sm.height = 0.07; sm.radial_segments = 7; sm.rings = 4
+	paper_mm = _mk_mm(Color(0.9, 0.9, 0.86), Vector3.ONE, false, sm)
+	var vm = CylinderMesh.new(); vm.top_radius = 0.19; vm.bottom_radius = 0.2; vm.height = 0.01; vm.radial_segments = 14; vm.rings = 1
+	vomit_mm = _mk_mm(Color(0.5, 0.5, 0.2), Vector3.ONE, false, vm)
+	vomit_mm.material_override.roughness = 0.15
+	var bm2 = SphereMesh.new(); bm2.radius = 0.06; bm2.height = 0.03; bm2.radial_segments = 8; bm2.rings = 3
+	vomit2_mm = _mk_mm(Color(0.58, 0.44, 0.2), Vector3.ONE, false, bm2)
+	vomit2_mm.material_override.roughness = 0.2
 
-func _mk_mm(col: Color, size: Vector3) -> MultiMeshInstance3D:
+func _mk_mm(col: Color, size: Vector3, colors := false, mesh: Mesh = null) -> MultiMeshInstance3D:
 	var mmi = MultiMeshInstance3D.new()
 	var mm = MultiMesh.new()
 	mm.transform_format = MultiMesh.TRANSFORM_3D
-	var bm = BoxMesh.new(); bm.size = size
-	mm.mesh = bm
+	mm.use_colors = colors
+	if mesh == null:
+		var bm = BoxMesh.new(); bm.size = size
+		mesh = bm
+	mm.mesh = mesh
 	mmi.multimesh = mm
 	mmi.material_override = Geo.mat(col, 0.8)
+	if colors: mmi.material_override.vertex_color_use_as_albedo = true
 	mmi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
 	add_child(mmi)
 	return mmi
@@ -85,6 +106,14 @@ func sync(gdt: float) -> void:
 # tile -> room furniture item (for view-side "don't walk through furniture" and seat approach)
 var _tiles = {}
 var _tiles_n = -1
+# 0.9.9: tiles a body may not stand in or cross (walls, holes, solid furniture, chairs). Seats are entered via vs.
+func nav_blocked(x: int, y: int) -> bool:
+	if not sim.walk0(x, y): return true
+	var it = item_at_tile(x, y)
+	if it == null: return false
+	var k = str(it.k)
+	if k == "plant" or k == "noticeboard": return false
+	return not it.get("soft") or k in CharPuppet.CHAIRS
 func item_at_tile(x: int, y: int):
 	var tn = sim.S.rooms.size() * 100000 + sim.S.items.size()
 	if _tiles.is_empty() or _tiles_n != tn:
@@ -200,15 +229,94 @@ func _sync_doors(_gdt: float) -> void:
 		var t = ease(dop, 0.6) * 1.75
 		leaf.rotation.y = base + (sg if sg != 0.0 else -1.0) * t
 
+const WRAP_COLS := [Color(0.9, 0.2, 0.2), Color(0.95, 0.75, 0.1), Color(0.2, 0.5, 0.9), Color(0.3, 0.75, 0.3), Color(0.85, 0.4, 0.8)]
+func _lit_h(l) -> int:
+	return absi(int(float(l.x) * 1000.0) * 73856093 ^ int(float(l.y) * 1000.0) * 19349663)
 func _sync_litter() -> void:
 	var lit: Array = sim.S.litter
-	var a = []
-	var b = []
+	_tick_fx()
+	var sg = str(lit.size())
+	for l in lit: sg += "," + str(_lit_h(l))
+	if sg == _lit_sig: return
+	_lit_sig = sg
+	if OS.get_environment("DBG_LIT") != "": print("LIT n ", lit.size(), " ", lit.slice(0, 3))
+	var wr = []; var cu = []; var pa = []; var vo = []
+	var now = {}
 	for l in lit:
-		if l.get("v"): b.append(l)
-		else: a.append(l)
-	_fill_mm(litter_mm, a)
-	_fill_mm(vomit_mm, b)
+		var h = _lit_h(l)
+		now[h] = true
+		if l.get("v"): vo.append(l)
+		elif h % 3 == 0: wr.append(l)
+		elif h % 3 == 1: cu.append(l)
+		else: pa.append(l)
+		if _lit_init and not _lit_seen.has(h): _on_new_mess(l)
+	_lit_seen = now; _lit_init = true
+	var mm = litter_mm.multimesh
+	mm.instance_count = wr.size()
+	for i in wr.size():
+		var l = wr[i]; var h = _lit_h(wr[i])
+		mm.set_instance_transform(i, Transform3D(Basis(Vector3.UP, float(h % 628) / 100.0).rotated(Vector3(1, 0, 0), 0.08), Vector3(float(l.x) + 0.5, 0.01, float(l.y) + 0.5)))
+		mm.set_instance_color(i, WRAP_COLS[(h / 3) % WRAP_COLS.size()])
+	mm = cup_mm.multimesh
+	mm.instance_count = cu.size()
+	for i in cu.size():
+		var l = cu[i]; var h = _lit_h(cu[i])
+		var b = Basis(Vector3(0, 0, 1), PI * 0.5).rotated(Vector3.UP, float(h % 628) / 100.0)
+		mm.set_instance_transform(i, Transform3D(b, Vector3(float(l.x) + 0.5, 0.034, float(l.y) + 0.5)))
+	mm = paper_mm.multimesh
+	mm.instance_count = pa.size()
+	for i in pa.size():
+		var l = pa[i]; var h = _lit_h(pa[i])
+		mm.set_instance_transform(i, Transform3D(Basis(Vector3(0.3, 1, 0.1).normalized(), float(h % 628) / 100.0), Vector3(float(l.x) + 0.5, 0.03, float(l.y) + 0.5)))
+	mm = vomit_mm.multimesh
+	var mm2 = vomit2_mm.multimesh
+	mm.instance_count = vo.size(); mm2.instance_count = vo.size() * 3
+	for i in vo.size():
+		var l = vo[i]; var h = _lit_h(vo[i])
+		var c = Vector3(float(l.x) + 0.5, 0.006, float(l.y) + 0.5)
+		var rot = float(h % 628) / 100.0
+		mm.set_instance_transform(i, Transform3D(Basis(Vector3.UP, rot).scaled(Vector3(1.0 + float(h % 5) * 0.1, 1, 0.7 + float(h % 3) * 0.1)), c))
+		for j in 3:
+			var a = rot + j * 2.1 + float((h >> (j * 3)) % 7) * 0.2
+			var rr = 0.12 + float((h >> (j * 4)) % 5) * 0.03
+			mm2.set_instance_transform(i * 3 + j, Transform3D(Basis.IDENTITY.scaled(Vector3.ONE * (0.6 + 0.2 * j)), c + Vector3(cos(a) * rr, 0.004, sin(a) * rr)))
+
+# 0.9.9: whoever made the mess is shown making it: a sick patient doubles over and retches, a litterer drops it
+func _on_new_mess(l) -> void:
+	var at = Vector3(float(l.x) + 0.5, 0, float(l.y) + 0.5)
+	var best = null; var bd = 1.3
+	for id in puppets:
+		var p: CharPuppet = puppets[id]
+		if p.is_staff or not p.visible: continue
+		var d = Vector2(p.position.x - at.x, p.position.z - at.z).length()
+		if d < bd: bd = d; best = p
+	if best == null: return
+	if l.get("v"):
+		best.retch_t = 1.4
+		var gm = get_tree().current_scene
+		if cam and cam.is_position_in_frustum(at) and gm and gm.has_method("snd"): gm.snd("retch")
+		var mt = Geo.mat(Color(0.5, 0.5, 0.2), 0.2)
+		var sm = SphereMesh.new(); sm.radius = 0.025; sm.height = 0.05; sm.radial_segments = 6; sm.rings = 3
+		for k in 7:
+			var mi = MeshInstance3D.new(); mi.mesh = sm; mi.material_override = mt
+			mi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+			dyn_root.add_child(mi)
+			var f = best.global_basis * Vector3(0, 0, 1)
+			mi.global_position = best.position + Vector3(0, 1.25, 0) + f * 0.25
+			_fx.append({"n": mi, "t": -k * 0.05, "v": f * randf_range(0.2, 0.5) + Vector3(randf_range(-.15, .15), 0.3, randf_range(-.15, .15)), "life": 1.0})
+
+func _tick_fx() -> void:
+	var dt = get_process_delta_time()
+	for i in range(_fx.size() - 1, -1, -1):
+		var q = _fx[i]
+		q.t += dt
+		if q.t < 0.0: continue
+		if not is_instance_valid(q.n) or q.t > q.life:
+			if is_instance_valid(q.n): q.n.queue_free()
+			_fx.remove_at(i); continue
+		q.v.y -= 6.0 * dt
+		q.n.position += q.v * dt
+		if q.n.position.y < 0.02: q.n.position.y = 0.02; q.v = Vector3.ZERO
 
 func _fill_mm(mmi: MultiMeshInstance3D, arr: Array) -> void:
 	var mm = mmi.multimesh
@@ -339,6 +447,7 @@ func _sync_chars(gdt: float) -> void:
 # visual-only personal space: standing/walking bodies closer than MIN_SEP are eased apart (sim positions untouched),
 # so two people never render inside each other at doors / queues
 const MIN_SEP := 0.7
+const LOOK_SEP := 1.6
 func _separate(gdt: float) -> void:
 	_separate_pass(gdt, 0)
 
@@ -355,12 +464,25 @@ func _separate_pass(gdt: float, pass_i: int) -> void:
 			var b: CharPuppet = arr[j]
 			var dx = b.position.x - a.position.x
 			var dz = b.position.z - a.position.z
-			if absf(dx) > MIN_SEP or absf(dz) > MIN_SEP: continue
+			if absf(dx) > LOOK_SEP or absf(dz) > LOOK_SEP: continue
 			var d = sqrt(dx * dx + dz * dz)
-			if d >= MIN_SEP: continue
+			if d >= LOOK_SEP: continue
 			var fb = b.is_fixed()
 			if fa and fb: continue
 			var n = Vector3(dx, 0, dz) / d if d > 0.001 else Vector3(1, 0, 0).rotated(Vector3.UP, float(a.eid * 7 + b.eid))
+			# 0.9.9: two bodies walking into each other step aside early (each to its own right) instead of
+			# pushing head-on until they pass through one another
+			var rv: Vector3 = a.vel - b.vel
+			var closing = rv.dot(n)
+			if closing > 0.15 and pass_i == 0:
+				var lat = Vector3(-n.z, 0, n.x)
+				var ttc = clampf((d - MIN_SEP * 0.8) / closing, 0.0, 2.0)
+				var kl = clampf((LOOK_SEP - d) / (LOOK_SEP - MIN_SEP * 0.6), 0.0, 1.0) * 0.42 * (1.0 - ttc / 2.0 * 0.5)
+				var kla = 0.0 if fa else (kl * 2.0 if fb else kl)
+				var klb = 0.0 if fb else (kl * 2.0 if fa else kl)
+				push[a] = push.get(a, Vector3.ZERO) + lat * kla
+				push[b] = push.get(b, Vector3.ZERO) - lat * klb
+			if d >= MIN_SEP: continue
 			var k = (MIN_SEP - d) * 0.5
 			var ka = 0.0 if fa else (k * 2.0 if fb else k)
 			var kb = 0.0 if fb else (k * 2.0 if fa else k)
@@ -379,7 +501,28 @@ func _separate_pass(gdt: float, pass_i: int) -> void:
 		tgt = _free_push(p.position, tgt)
 		p.sep_off = p.sep_off.lerp(tgt, minf(1.0, 0.3 + gdt * 8.0))
 		p.position += p.sep_off
-	if pass_i == 0: _separate_pass(gdt, 1)
+	if pass_i == 0:
+		_separate_pass(gdt, 1)
+		if _dbg_ov: _overlap_stat(arr)
+
+var _dbg_ov = OS.get_environment("DBG_OVERLAP") != ""
+var _ov_n = 0
+var _ov_f = 0
+var _ov_walk = 0
+func _overlap_stat(arr: Array) -> void:
+	_ov_f += 1
+	for i in arr.size():
+		var a: CharPuppet = arr[i]
+		if a.is_fixed(): continue
+		for j in range(i + 1, arr.size()):
+			var b: CharPuppet = arr[j]
+			if b.is_fixed(): continue
+			var d = Vector2(b.position.x - a.position.x, b.position.z - a.position.z).length()
+			if d < 0.4:
+				_ov_n += 1
+				if a.vel.length() > 0.3 or b.vel.length() > 0.3: _ov_walk += 1
+				if _ov_n % 50 == 1: print("OVP f ", _ov_f, " ", a.kind, "/", b.kind, " ", a.position, " d ", snappedf(d, .01), " v ", snappedf(a.vel.length(), .1), ",", snappedf(b.vel.length(), .1), " sw ", snappedf(a._seat_w, .1), ",", snappedf(b._seat_w, .1), " vs ", a.cue_vs != null, b.cue_vs != null)
+	if _ov_f % 600 == 0: print("OVERLAP frames ", _ov_f, " pairs<0.4m ", _ov_n, " moving ", _ov_walk, " bodies ", arr.size())
 
 # never push a body through a wall or into solid furniture
 func _free_push(pos: Vector3, off: Vector3) -> Vector3:

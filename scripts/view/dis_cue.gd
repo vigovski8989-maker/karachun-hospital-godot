@@ -71,12 +71,15 @@ static func build(p: CharPuppet, dis: String) -> void:
 				Geo.box(n, Vector3(0.054, 0.054, 0.012), gl, Vector3(sx * 0.04, 0, 0.05), 0.004)
 			Geo.box(n, Vector3(0.03, 0.012, 0.012), fm, Vector3(0, 0.01, 0.05), 0.004)
 			p.attach_prop("c_eyes", n, "Head", Vector3(0, 0.07, 0.07))
+			# white cane: grip at the node origin, shaft along -Y (1 m); placed every pose frame by _cane() so the tip sweeps the floor
 			var cane = Node3D.new()
 			var cm = m.call(Color(0.96, 0.96, 0.94), 0.5)
-			Geo.cyl(cane, 0.013, 0.013, 1.0, cm, Vector3(0, 0, 0), 8)
-			for i in 4: Geo.cyl(cane, 0.0135, 0.0135, 0.1, m.call(Color(0.85, 0.1, 0.1), 0.5), Vector3(0, -0.4 + i * 0.22, 0), 8)
-			Geo.box(cane, Vector3(0.05, 0.03, 0.03), cm, Vector3(0, 0.5, 0), 0.01)
-			p.attach_prop("c_cane", cane, "hand_l", Vector3(0, -0.4, 0.04))
+			Geo.cyl(cane, 0.012, 0.012, 1.0, cm, Vector3(0, -0.5, 0), 8)
+			for i in 3: Geo.cyl(cane, 0.0135, 0.0135, 0.09, m.call(Color(0.85, 0.1, 0.1), 0.5), Vector3(0, -0.93 + i * 0.16, 0), 8)
+			Geo.cyl(cane, 0.02, 0.02, 0.12, m.call(Color(0.08, 0.08, 0.08), 0.6), Vector3(0, -0.02, 0), 8)
+			Geo.sphere(cane, 0.02, m.call(Color(0.15, 0.15, 0.15), 0.6), Vector3(0, -1.0, 0))
+			cane.top_level = true
+			p.add_child(cane); c_set(p, "cane", cane)
 		"blinknose":
 			var n = Node3D.new()
 			var rm = m.call(Color(1.0, 0.1, 0.08), 0.3); rm.emission_enabled = true; rm.emission = Color(1, 0.1, 0.05); rm.emission_energy_multiplier = 1.5
@@ -189,6 +192,44 @@ static func build(p: CharPuppet, dis: String) -> void:
 	if dis in ["balloonhead"]: pass
 
 # ---------------------------------------------------------------- per-frame (every frame)
+static func c_set(p: CharPuppet, k: String, v) -> void:
+	p.cue[k] = v
+
+# the cane is held low in the left hand; while walking the tip sweeps left-right and taps the floor at each side
+static func _cane(p: CharPuppet, live: bool, T: float) -> void:
+	var cane: Node3D = p.cue.cane
+	if not is_instance_valid(cane): return
+	var sk: Skeleton3D = p.skel
+	var gfwd: Vector3 = p.global_basis * Vector3(0, 0, 1)
+	var gright: Vector3 = -p.global_basis.x
+	var pos: Vector3 = p.global_position
+	cane.visible = p.visible and p.lie_k < 0.3
+	if not cane.visible: return
+	var walking: bool = p.vel.length() > 0.25
+	var standing: bool = live and not p.seated and p.reach_w < 0.01
+	if standing:
+		_reach_s(p, "upperarm_l", "hand_l", pos + Vector3(0, 0.8, 0) + gfwd * 0.3 - gright * 0.1, 0.9)
+	var hi = sk.find_bone("hand_l")
+	if hi < 0: return
+	var hand: Vector3 = sk.global_transform * sk.get_bone_global_pose(hi).origin
+	var tip: Vector3
+	if standing:
+		var ph: float = T * (5.2 if walking else 1.2) + float(p.cue.ph)
+		var sw: float = sin(ph)
+		var amp: float = 0.3 if walking else 0.08
+		tip = pos + gfwd * 0.9 + gright * (sw * amp - 0.05)
+		tip.y = 0.02 + (0.06 * (1.0 - absf(sw)) if walking else 0.0)
+	else:
+		tip = Vector3(hand.x, 0.02, hand.z) + gfwd * 0.15 - gright * 0.12
+	var v: Vector3 = hand - tip
+	var L: float = clampf(v.length(), 0.6, 1.25)
+	var y: Vector3 = v.normalized()
+	var x: Vector3 = y.cross(gfwd)
+	if x.length() < 0.01: x = y.cross(gright)
+	x = x.normalized()
+	var z: Vector3 = x.cross(y).normalized()
+	cane.global_transform = Transform3D(Basis(x, y * L, z), hand)
+
 static func speed(p: CharPuppet, spd: float, moving: bool) -> float:
 	if p.cue.is_empty() or not moving: return spd
 	return spd * float(p.cue.b.get("slow", 1.0))
@@ -293,6 +334,8 @@ static func bones(p: CharPuppet) -> void:
 	lean += float(b.get("slump", 0.0)) if live else 0.0
 	match mv:
 		"bend": lean += 1.0 * env; head_lean += 0.2 * env
+		"grope":
+			if live and not p.seated: lean += 0.1; head_lean += 0.12 + 0.06 * sin(T * 1.3 + c.ph); roll += 0.03 * sin(T * 0.9 + c.ph)
 		"yawn": head_lean -= 0.55 * env; lean -= 0.1 * env
 		"sneeze":
 			var s = 0.0
@@ -313,6 +356,7 @@ static func bones(p: CharPuppet) -> void:
 	if head_lean != 0.0:
 		_rot(p, "neck_01", side, head_lean * 0.4); _rot(p, "Head", side, head_lean * 0.6)
 	if roll != 0.0: _rot(p, "spine_03", fwd, roll)
+	if c.has("cane"): _cane(p, live, T)
 	# arms
 	if not live or p.seated or p.reach_w > 0.01: return
 	var hw: Vector3 = p.head_world()
@@ -335,7 +379,7 @@ static func bones(p: CharPuppet) -> void:
 		_reach_s(p, "upperarm_r", "hand_r", hw + gfwd * 0.42 + gright * 0.12 + Vector3(0, 0.08, 0), 1.0)
 	elif mv == "grope":
 		var k = 0.5 + 0.5 * sin(T * 2.4 + c.ph)
-		_reach_s(p, "upperarm_r", "hand_r", p.global_position + Vector3(0, 0.95, 0) + gfwd * 0.5 + gright * (0.15 - 0.3 * k), 0.85)
+		_reach_s(p, "upperarm_r", "hand_r", p.global_position + Vector3(0, 1.0, 0) + gfwd * 0.4 + gright * (0.22 - 0.12 * k), 0.45)
 
 static func _reach_s(p: CharPuppet, upper: String, hand: String, target: Vector3, w: float) -> void:
 	var sk: Skeleton3D = p.skel
@@ -369,6 +413,15 @@ static func pose(p: CharPuppet) -> void:
 		var side: Vector3 = Vector3.UP.cross(fwd).normalized()
 		_rot(p, "spine_01", side, p.stoop * 0.3); _rot(p, "spine_02", side, p.stoop * 0.4); _rot(p, "spine_03", side, p.stoop * 0.3)
 		_rot(p, "Head", side, -p.stoop * 0.7)
+	if p.retch_t > 0.0 and p.lie_k < 0.3:
+		# 0.9.9: being sick: double over, head down (a vomit puddle appears on the floor in front)
+		var u2 = clampf(p.retch_t / 1.4, 0.0, 1.0)
+		var e2 = sin(u2 * PI)
+		var fw: Vector3 = (sk.global_basis.inverse() * p.global_basis * Vector3(0, 0, 1)).normalized()
+		var sd2: Vector3 = Vector3.UP.cross(fw).normalized()
+		var jerk = 1.0 + 0.15 * sin(p.retch_t * 22.0)
+		_rot(p, "spine_01", sd2, 0.3 * e2 * jerk); _rot(p, "spine_02", sd2, 0.45 * e2 * jerk); _rot(p, "spine_03", sd2, 0.35 * e2)
+		_rot(p, "neck_01", sd2, 0.25 * e2); _rot(p, "Head", sd2, 0.2 * e2)
 	if c.is_empty(): return
 	match d:
 		"flathead":
@@ -392,11 +445,20 @@ static func _anchor(p: CharPuppet, at: String) -> Vector3:
 		"phone": return hw + f * 0.42 + Vector3(0, 0.08, 0)
 	return hw
 
+static var _burp_last = 0
 static func _emit(p: CharPuppet) -> void:
 	var c: Dictionary = p.cue
 	var b: Dictionary = c.b
 	var key: String = b.ic
 	if key == "": return
+	# 0.9.9: stomach / fizzy patients audibly burp (only when on screen, at most one burp every 2.5 s overall)
+	if c.d in ["gourmetstomach", "fizzyblood"] and p.is_inside_tree():
+		var now = Time.get_ticks_msec()
+		var cam = p.get_viewport().get_camera_3d()
+		if now - _burp_last > 2500 and cam and cam.is_position_in_frustum(p.global_position + Vector3(0, 1, 0)):
+			_burp_last = now
+			var gm = p.get_tree().current_scene
+			if gm and gm.has_method("snd"): gm.snd("burp")
 	var n = int(b.get("burst", 1))
 	for i in n:
 		var s = Sprite3D.new()
