@@ -159,6 +159,7 @@ func waitSpot(r, p) -> Dictionary:
 	return t
 
 func _pat_queue(p, dt: float) -> void:
+	if _dz_queue(p, dt): return
 	super._pat_queue(p, dt)
 	if p.state != "queue" or p.vs: return
 	var r = room_by_id(p.room)
@@ -186,3 +187,108 @@ func _pat_queue(p, dt: float) -> void:
 		goTo(p, t.x, t.y)
 	elif p.path.is_empty():
 		p.dir = t.dir
+
+
+# ---------- 1.0.0 «Понос» (diarrhea; sim change approved by the user) ----------
+# A pharmacy disease on levels 2-12. While waiting, the patient periodically RUNS to the nearest clean free toilet
+# and leaves it dirty. Nobody uses a dirty toilet until a janitor (handyman/orderly) cleans it, and they clean
+# toilets before ordinary litter. If the clean toilet is only occupied the patient waits (-0.2 patience/s); if every
+# toilet is dirty (or there is none) they get annoyed (-0.5/s) and after 30 s have an accident (brown litter, -8). Other patients skip dirty toilets and grumble while every toilet is dirty.
+const DIARRHEA := {"id": "diarrhea", "name": "Понос", "desc": "Живот бурлит и крутит — до туалета приходится бежать бегом. После такого визита туалет нужно мыть.", "cure": "pharmacy", "fee": 1000, "diff": 0.4, "color": "#a0682a", "icon": "💩"}
+func load_data(path := "res://data/effective_data.json") -> void:
+	super.load_data(path)
+	if OS.get_environment("KH_NO_DIARRHEA") != "": return   # harness A/B only: the pre-1.0.0 disease set
+	if not D.dis.has("diarrhea"):
+		var d = DIARRHEA.duplicate(true)
+		D.diseases.append(d); D.dis[d.id] = d
+		for i in range(1, D.levels.size()):
+			if not D.levels[i].diseases.has("diarrhea"): D.levels[i].diseases.append("diarrhea")
+
+func _dz_queue(p, dt: float) -> bool:
+	var r = room_by_id(p.room)
+	if p.dis != "diarrhea" or p.get("healed"):
+		# ordinary patients: wanting the toilet while every toilet is dirty is annoying
+		if r and not p.wcDone and gnum(p, "wc", 0.0) > float(p.wcAt) and _wc_all_dirty():
+			p.pat -= dt * 0.25
+			if p.thought == null: p.thought = "🤢"
+		elif p.thought == "🤢": p.thought = null
+		return false
+	if p.get("dzInit") == null:
+		p.dzInit = true; p.wc = 0.0; p.wcAt = rnd(12, 28)
+	if p.get("dzBack"):
+		p.dzBack = false; p.wc = 0.0; p.wcAt = rnd(35, 60)
+		if p.thought == "😖": p.thought = null
+	p.wcDone = true   # the generic one-off toilet trip is replaced by the urge below
+	if r == null or gnum(p, "wc", 0.0) < float(p.wcAt): return false
+	if r.queue.size() and r.queue[0] == p.id and r.busy == null and staffReady(r): return false
+	if p.vs and p.vs.ph != "sat": return false
+	var tr = null
+	var bd = 1e9
+	for q in S.rooms:
+		if q.type == "toilet" and q.busy == null and not q.get("dirty") and roomLay(q).sp.get("patient"):
+			var d = absf(q.x - p.x) + absf(q.y - p.y)
+			if d < bd: bd = d; tr = q
+	if tr:
+		tr.busy = p.id
+		p.wcRoom = tr.id
+		r.queue.erase(p.id)
+		p.room = null
+		releaseBench(p)
+		p.wantSeat = null
+		p.wsp = null
+		p.thought = "🚽"
+		p.state = "wc1"
+		p.wcGo = false
+		p.rush = true
+		p.dzWait = 0.0
+		return true
+	var clean_exists = false
+	for q in S.rooms:
+		if q.type == "toilet" and not q.get("dirty"): clean_exists = true
+	if clean_exists:
+		# the clean toilet is just occupied: hop from foot to foot and wait for it
+		p.thought = "🚽"
+		p.pat -= dt * 0.2
+		return false
+	p.dzWait = gnum(p, "dzWait", 0.0) + dt
+	p.thought = "😖"
+	p.pat -= dt * 0.5
+	if p.dzWait > 30.0:
+		S.litter.append({"x": p.x + rnd(-.2, .2), "y": p.y + rnd(-.2, .2), "v": 2})
+		p.pat -= 8.0
+		S.dzAcc = gnum(S, "dzAcc", 0) + 1
+		p.wc = 0.0; p.wcAt = rnd(35, 60); p.dzWait = 0.0; p.thought = null
+	return false
+
+func _wc_all_dirty() -> bool:
+	var any = false
+	for q in S.rooms:
+		if q.type == "toilet":
+			if not q.get("dirty"): return false
+			any = true
+	return any
+
+func updPatient(p, dt: float) -> void:
+	var st0 = p.state
+	super.updPatient(p, dt)
+	if st0 == "wc2" and p.state == "wcF" and p.dis == "diarrhea" and not p.get("healed"):
+		var tr = room_by_id(p.get("wcRoom"))
+		if tr:
+			tr.dirty = true
+			S.wcDirty = gnum(S, "wcDirty", 0) + 1
+		p.dzBack = true
+	if st0 == "wc1" and p.state != "wc1": p.rush = false
+	if _dbg_wc and st0 != "wc2" and p.state == "wc2":
+		var tq = room_by_id(p.get("wcRoom"))
+		print("WCUSE ", p.dis, " dirty ", tq != null and tq.get("dirty") == true)
+
+var _dbg_wc := OS.get_environment("DBG_WC") != ""
+
+func move(e, dt: float, sp := 2.2) -> bool:
+	if e.get("rush") and e.get("state") == "wc1": sp *= 1.6
+	return super.move(e, dt, sp)
+
+func spawnPatient() -> Variant:
+	var p = super.spawnPatient()
+	if p and p.dis == "diarrhea": S.dzN = gnum(S, "dzN", 0) + 1
+	return p

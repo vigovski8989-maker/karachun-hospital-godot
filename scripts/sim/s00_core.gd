@@ -550,7 +550,7 @@ func _pat_queue(p, dt: float) -> void:
 	var tr = null
 	if not p.wcDone:
 		for q in S.rooms:
-			if q.type == "toilet" and q.busy == null and roomLay(q).sp.get("patient") and absf(q.x - p.x) + absf(q.y - p.y) <= 16:
+			if q.type == "toilet" and q.busy == null and not q.get("dirty") and roomLay(q).sp.get("patient") and absf(q.x - p.x) + absf(q.y - p.y) <= 16:
 				tr = q; break
 	if not p.wcDone and p.wc > p.wcAt and tr and r.queue[0] != p.id and r.queue.size() > 1 and (not p.vs or p.vs.ph == "sat"):
 		tr.busy = p.id
@@ -778,6 +778,13 @@ func updStaff(s, dt: float) -> void:
 					s.state = "goto"
 				else: s.state = "idle"
 
+# 1.0.0: where a janitor stands to clean a toilet (the tile in front of the bowl, like a visitor)
+func wcCleanSpot(r) -> Variant:
+	var sp = r.get("sp").get("patient") if r.get("sp") else null
+	if sp == null: return null
+	if walk(sp.x, sp.y + 1): return {"x": int(sp.x), "y": int(sp.y) + 1}
+	return {"x": int(sp.x), "y": int(sp.y)}
+
 func task_taken(o) -> bool:
 	for h in S.staff:
 		if h.get("task") and is_same(h.task.o, o): return true
@@ -789,7 +796,7 @@ func updHandy(s, dt: float) -> void:
 			# lambdas capture locals by value in GDScript -> keep the running best in a shared dict
 			var acc = {"best": null, "bd": 1e9}
 			var cons = func(x, y, k, o):
-				var d: float = hyp(x - s.x, y - s.y) + (-80.0 if k == "fix" else 0.0)
+				var d: float = hyp(x - s.x, y - s.y) + (-80.0 if k == "fix" else (-40.0 if k == "wc" else 0.0))
 				if d < acc.bd:
 					acc.bd = d; acc.best = {"k": k, "o": o, "x": x, "y": y}
 			for r in S.rooms:
@@ -798,6 +805,11 @@ func updHandy(s, dt: float) -> void:
 					cons.call(q.x, q.y, "fix", r.id)
 			for l in S.litter:
 				if not task_taken(l): cons.call(int(round(l.x)), int(round(l.y)), "clean", l)
+			# 1.0.0: a dirty toilet (after a diarrhea patient) is cleaned before ordinary litter
+			for r in S.rooms:
+				if r.type == "toilet" and r.get("dirty") and not task_taken(r):
+					var wq = wcCleanSpot(r)
+					if wq: cons.call(wq.x, wq.y, "wc", r)
 			for it in S.items:
 				if it.type == "plant" and gnum(it, "water", 100) < 50 and not task_taken(it): cons.call(it.x, it.y, "water", it)
 			var best = acc.best
@@ -813,7 +825,7 @@ func updHandy(s, dt: float) -> void:
 		"goto":
 			if move(s, dt):
 				s.state = "do"
-				s.t = 4.0 if s.task.k == "fix" else 1.5
+				s.t = 4.0 if s.task.k == "fix" else (3.0 if s.task.k == "wc" else 1.5)
 		"do":
 			s.t -= dt * eff(s)
 			if s.t <= 0:
@@ -822,6 +834,7 @@ func updHandy(s, dt: float) -> void:
 					var r = room_by_id(k.o)
 					if r: r.cond = 100
 				elif k.k == "clean": S.litter.erase(k.o)
+				elif k.k == "wc": k.o.dirty = false
 				else: k.o.water = 100.0
 				s.task = null
 				s.state = "idle"

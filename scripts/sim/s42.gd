@@ -99,6 +99,10 @@ func v42FindJob(s) -> Variant:
 		if d < acc.bd:
 			acc.bd = d; acc.best = {"k": k, "o": o, "x": x, "y": y}
 	for l in S.litter: c.call(int(round(l.x)), int(round(l.y)), "clean", l, 6.0 if l.get("v") else 0.0)
+	for r in S.rooms:
+		if r.type == "toilet" and r.get("dirty"):
+			var wq = wcCleanSpot(r)
+			if wq: c.call(wq.x, wq.y, "wc", r, 15.0)
 	for it in S.items:
 		if it.type == "bin" and gnum(it, "fill", 0) >= 60: c.call(it.x, it.y, "bin", it, 2.0)
 		if it.type == "plant" and gnum(it, "water", 100) < 50: c.call(it.x, it.y, "water", it)
@@ -138,28 +142,31 @@ func updHandy(s, dt: float) -> void:
 func updStaff(s, dt: float) -> void:
 	if s.type == "handyman":
 		_v42w2(s, dt)
-		s.mop = s.state == "do" and s.get("task") and s.task.k == "clean"
+		s.mop = s.state == "do" and s.get("task") and (s.task.k == "clean" or s.task.k == "wc")
 		if s.state == "goto" and s.get("task") and s.task.k == "clean" and not litter_has(s.task.o):
 			s.task = null; s.state = "idle"; s.path = []
+		if s.get("task") and s.task.k == "wc" and not s.task.o.get("dirty") and s.state != "idle":
+			s.task = null; s.state = "idle"; s.path = []; s.mop = false
 		return
 	if s.type != "orderly":
 		_v42w2(s, dt); return
 	if s.get("cl"):
 		var j = s.cl
-		var gone: bool = (not litter_has(j.o)) if j.k == "clean" else (not items_has(j.o))
+		var gone: bool = (not litter_has(j.o)) if j.k == "clean" else ((not j.o.get("dirty")) if j.k == "wc" else (not items_has(j.o)))
 		if gone:
 			s.cl = null; s.task = null; s.mop = false; s.path = []; s.state = "idle"
 			v42Back(s); return
 		if j.ph == "go":
 			if move(s, dt):
 				j.ph = "do"
-				j.t = (4.5 if j.o.get("v") else 3.5) if j.k == "clean" else 2.5
+				j.t = (4.5 if j.o.get("v") else 3.5) if j.k == "clean" else (5.0 if j.k == "wc" else 2.5)
 				s.dir = ((0 if j.x > s.x else 2) if absf(j.x - s.x) > absf(j.y - s.y) else (1 if j.y > s.y else 3))
-				s.mop = j.k == "clean"
+				s.mop = j.k == "clean" or j.k == "wc"
 			return
 		j.t -= dt * eff(s)
 		if j.t <= 0:
 			if j.k == "clean": litter_remove(j.o)
+			elif j.k == "wc": j.o.dirty = false
 			elif j.k == "bin": j.o.fill = 0
 			else: j.o.water = 100.0
 			S.v42cl = gnum(S, "v42cl", 0) + 1

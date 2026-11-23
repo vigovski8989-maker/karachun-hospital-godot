@@ -18,6 +18,8 @@ var mats = {}
 var litter_mm: MultiMeshInstance3D
 var vomit_mm: MultiMeshInstance3D
 var vomit2_mm: MultiMeshInstance3D
+var poo_mm: MultiMeshInstance3D
+var dirty_fx = {}
 var cup_mm: MultiMeshInstance3D
 var paper_mm: MultiMeshInstance3D
 var _lit_seen = {}
@@ -46,6 +48,9 @@ func _ready() -> void:
 	var bm2 = SphereMesh.new(); bm2.radius = 0.06; bm2.height = 0.03; bm2.radial_segments = 8; bm2.rings = 3
 	vomit2_mm = _mk_mm(Color(0.58, 0.44, 0.2), Vector3.ONE, false, bm2)
 	vomit2_mm.material_override.roughness = 0.2
+	var pm = CylinderMesh.new(); pm.top_radius = 0.17; pm.bottom_radius = 0.18; pm.height = 0.012; pm.radial_segments = 12; pm.rings = 1
+	poo_mm = _mk_mm(Color(0.36, 0.22, 0.1), Vector3.ONE, false, pm)
+	poo_mm.material_override.roughness = 0.25
 
 func _mk_mm(col: Color, size: Vector3, colors := false, mesh: Mesh = null) -> MultiMeshInstance3D:
 	var mmi = MultiMeshInstance3D.new()
@@ -98,6 +103,7 @@ func sync(gdt: float) -> void:
 		_tiles = {}
 	_sync_doors(gdt)
 	_sync_litter()
+	_sync_dirty_wc(gdt)
 	_sync_chars(gdt)
 	_anim_rooms(gdt)
 	_tick_emotes(gdt)
@@ -240,12 +246,13 @@ func _sync_litter() -> void:
 	if sg == _lit_sig: return
 	_lit_sig = sg
 	if OS.get_environment("DBG_LIT") != "": print("LIT n ", lit.size(), " ", lit.slice(0, 3))
-	var wr = []; var cu = []; var pa = []; var vo = []
+	var wr = []; var cu = []; var pa = []; var vo = []; var po = []
 	var now = {}
 	for l in lit:
 		var h = _lit_h(l)
 		now[h] = true
-		if l.get("v"): vo.append(l)
+		if l.get("v") == 2: po.append(l)
+		elif l.get("v"): vo.append(l)
 		elif h % 3 == 0: wr.append(l)
 		elif h % 3 == 1: cu.append(l)
 		else: pa.append(l)
@@ -280,6 +287,12 @@ func _sync_litter() -> void:
 			var a = rot + j * 2.1 + float((h >> (j * 3)) % 7) * 0.2
 			var rr = 0.12 + float((h >> (j * 4)) % 5) * 0.03
 			mm2.set_instance_transform(i * 3 + j, Transform3D(Basis.IDENTITY.scaled(Vector3.ONE * (0.6 + 0.2 * j)), c + Vector3(cos(a) * rr, 0.004, sin(a) * rr)))
+
+	mm = poo_mm.multimesh
+	mm.instance_count = po.size()
+	for i in po.size():
+		var l = po[i]; var h = _lit_h(po[i])
+		mm.set_instance_transform(i, Transform3D(Basis(Vector3.UP, float(h % 628) / 100.0).scaled(Vector3(1.1, 1, 0.75)), Vector3(float(l.x) + 0.5, 0.007, float(l.y) + 0.5)))
 
 # 0.9.9: whoever made the mess is shown making it: a sick patient doubles over and retches, a litterer drops it
 func _on_new_mess(l) -> void:
@@ -331,7 +344,7 @@ const INV := ["lostshadow"]
 # 45.x drew these skin diseases with a bandaged "mummy" body (looked like an untextured mannequin);
 # 0.9.2 shows them as a normal patient with the symptom painted on the skin instead
 const MUM := []
-const DIS_ICON := {"pixel": "👾", "yawn": "🥱", "nosewhistle": "🎶", "giggles": "🤭", "grumpliver": "😤", "squareeyes": "🔲", "balloonhead": "🎈", "echo": "🔁", "rubberknee": "🦘", "puffytoes": "🦶", "selfiesyndrome": "🤳", "blinknose": "🔴", "drumheart": "🥁", "soapsneeze": "🫧", "jellyspine": "🍮", "lostshadow": "👻", "fizzyblood": "🥤", "twistedtongue": "👅", "cloudhead": "☁️", "hiccupclock": "⏰", "glowskin": "✨", "spotty": "🍄", "zebra": "🦓", "tail": "🐒", "flathead": "🥞", "deflated": "🫠", "statichair": "⚡", "lowbattery": "🪫", "bluescreen": "💻", "looping": "🔂", "lazyheart": "🫀", "wanderliver": "🧳", "chattykidney": "💬", "bagpipelungs": "🎵", "gourmetstomach": "🦪", "lovesickheart": "💘", "sneezykidney": "🤧"}
+const DIS_ICON := {"pixel": "👾", "yawn": "🥱", "nosewhistle": "🎶", "giggles": "🤭", "grumpliver": "😤", "squareeyes": "🔲", "balloonhead": "🎈", "echo": "🔁", "rubberknee": "🦘", "puffytoes": "🦶", "selfiesyndrome": "🤳", "blinknose": "🔴", "drumheart": "🥁", "soapsneeze": "🫧", "jellyspine": "🍮", "lostshadow": "👻", "fizzyblood": "🥤", "twistedtongue": "👅", "cloudhead": "☁️", "hiccupclock": "⏰", "glowskin": "✨", "spotty": "🍄", "zebra": "🦓", "tail": "🐒", "flathead": "🥞", "deflated": "🫠", "statichair": "⚡", "lowbattery": "🪫", "bluescreen": "💻", "looping": "🔂", "lazyheart": "🫀", "wanderliver": "🧳", "chattykidney": "💬", "bagpipelungs": "🎵", "gourmetstomach": "🦪", "lovesickheart": "💘", "sneezykidney": "🤧", "diarrhea": "💩"}
 const SHOES := [Color(0.13, 0.11, 0.1), Color(0.36, 0.22, 0.13), Color(0.93, 0.93, 0.92), Color(0.18, 0.3, 0.55), Color(0.55, 0.12, 0.12), Color(0.5, 0.45, 0.4)]
 const ROCK := ["echo", "giggles", "drumheart", "looping", "bagpipelungs", "hiccupclock"]
 const STAFF_GLB := {"doctor": "doctor", "nurse": "nurse", "receptionist": "receptionist", "handyman": "orderly", "orderly": "orderly"}
@@ -728,3 +741,81 @@ func _flat(parent: Node3D, rc: Rect2, m: Material, y: float) -> void:
 	mi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
 	parent.add_child(mi)
 
+
+
+# 1.0.0: a toilet left dirty by a diarrhea patient: brown smears on and around the bowl, flies, stink lines
+func _wc_node(r):
+	if wb == null or not wb.items_nodes.has(r.id): return null
+	for it in wb.items_nodes[r.id]:
+		if str(it.t.get("k", "")) == "wc": return it.piv
+	return null
+func _sync_dirty_wc(gdt: float) -> void:
+	var T = Time.get_ticks_msec() / 1000.0
+	var live = {}
+	for r in sim.S.rooms:
+		if r.type != "toilet" or not r.get("dirty"): continue
+		live[r.id] = true
+		var fx = dirty_fx.get(r.id)
+		if fx == null or not is_instance_valid(fx.n):
+			var piv = _wc_node(r)
+			if piv == null or r.get("sp") == null or r.sp.get("patient") == null: continue
+			fx = _mk_dirty(piv, Vector3(float(r.sp.patient.x) + 0.5, 0, float(r.sp.patient.y) + 0.5))
+			if OS.get_environment("DBG_WC") != "": print("WC dirty room ", r.id, " t ", snappedf(sim.S.t, 0.1), " frame ", Engine.get_process_frames())
+			dirty_fx[r.id] = fx
+		for i in fx.flies.size():
+			var f: Node3D = fx.flies[i]
+			var a = T * (2.6 + i * 0.7) + i * 2.1
+			f.position = fx.c + Vector3(cos(a) * (0.22 + 0.05 * sin(T * 3.0 + i)), 0.55 + 0.12 * sin(T * 4.3 + i * 1.7), sin(a * 1.3) * 0.2)
+		for i in fx.stink.size():
+			var sl: Node3D = fx.stink[i]
+			var u = fmod(T * 0.5 + i / 3.0, 1.0)
+			sl.position = fx.c + Vector3(-0.12 + i * 0.12, 0.55 + u * 0.5, 0.05)
+			sl.get_meta("m").albedo_color.a = sin(u * PI) * 0.85
+	for id in dirty_fx.keys():
+		if not live.has(id):
+			if is_instance_valid(dirty_fx[id].n): dirty_fx[id].n.queue_free()
+			dirty_fx.erase(id)
+			if OS.get_environment("DBG_WC") != "": print("WC clean room ", id, " t ", snappedf(sim.S.t, 0.1), " frame ", Engine.get_process_frames())
+func _mk_dirty(piv: Node3D, c: Vector3) -> Dictionary:
+	var n = Node3D.new(); dyn_root.add_child(n)
+	var fwd: Vector3 = Vector3(0, 0, 1)   # the bowl faces the tile in front of it (+y in the sim), like its visitor
+	var br = Geo.mat(Color(0.24, 0.13, 0.05), 0.3)
+	var br2 = Geo.mat(Color(0.3, 0.18, 0.07), 0.35)
+	var rng = RandomNumberGenerator.new(); rng.seed = int(c.x * 100 + c.z * 7)
+	# smears on the rim / seat and running down the front of the bowl
+	for i in 6:
+		var a = rng.randf_range(-1.2, 1.2)
+		var pos = c + fwd * (0.1 + rng.randf_range(0, 0.14)) + fwd.cross(Vector3.UP) * sin(a) * 0.15 + Vector3(0, 0.47 + rng.randf_range(-0.01, 0.02), 0)
+		var mi = MeshInstance3D.new(); var sm = SphereMesh.new(); sm.radius = rng.randf_range(0.03, 0.05); sm.height = sm.radius * 0.7
+		mi.mesh = sm; mi.material_override = br if i % 2 == 0 else br2; n.add_child(mi); mi.global_position = pos
+	for i in 3:
+		var mi = MeshInstance3D.new(); var bm = BoxMesh.new(); bm.size = Vector3(0.03, rng.randf_range(0.12, 0.22), 0.012)
+		mi.mesh = bm; mi.material_override = br; n.add_child(mi)
+		mi.global_position = c + fwd * 0.27 + fwd.cross(Vector3.UP) * (-0.08 + i * 0.08) + Vector3(0, 0.3, 0)
+	# splats on the floor round the bowl
+	for i in 5:
+		var mi = MeshInstance3D.new(); var cm = CylinderMesh.new(); var rr = rng.randf_range(0.04, 0.1)
+		cm.top_radius = rr; cm.bottom_radius = rr; cm.height = 0.008; cm.radial_segments = 9; cm.rings = 1
+		mi.mesh = cm; mi.material_override = br if i % 2 else br2; n.add_child(mi)
+		mi.scale = Vector3(rng.randf_range(0.6, 1.3), 1, rng.randf_range(0.5, 1.0)); mi.rotation.y = rng.randf_range(0, TAU)
+		var a = rng.randf_range(-1.6, 1.6)
+		mi.global_position = c + fwd * (0.32 + rng.randf_range(0, 0.3)) + fwd.cross(Vector3.UP) * sin(a) * 0.35 + Vector3(0, 0.005, 0)
+	var flies = []
+	var fm = Geo.mat(Color(0.05, 0.05, 0.05), 0.4)
+	for i in 4:
+		var f = MeshInstance3D.new(); var fs = SphereMesh.new(); fs.radius = 0.014; fs.height = 0.024; fs.radial_segments = 5; fs.rings = 2
+		f.mesh = fs; f.material_override = fm; n.add_child(f); flies.append(f)
+	var stink = []
+	for i in 3:
+		var l = Node3D.new()
+		var sm2 = Geo.mat(Color(0.5, 0.62, 0.18, 0.8), 0.6); sm2.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+		sm2.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+		for k in 4:
+			var b = MeshInstance3D.new(); var bx = BoxMesh.new(); bx.size = Vector3(0.012, 0.07, 0.012)
+			b.mesh = bx; b.material_override = sm2; b.position = Vector3(0.02 * (1 if k % 2 == 0 else -1), k * 0.06, 0); b.rotation.z = 0.5 * (1 if k % 2 == 0 else -1)
+			b.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+			l.add_child(b)
+		l.set_meta("m", sm2)
+		n.add_child(l); stink.append(l)
+	n.position = Vector3.ZERO
+	return {"n": n, "c": c, "flies": flies, "stink": stink}

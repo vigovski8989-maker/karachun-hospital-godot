@@ -34,6 +34,8 @@ var dbg_ui = ""
 var dbg_zoom = 0.0
 var boot_check = false
 var dbg_mess = 0
+var dbg_dz = 0
+var dbg_dz_n = 0
 var dbg_focus = ""
 var dbg_watch = ""
 var dbg_demo = ""
@@ -115,6 +117,15 @@ func _ready() -> void:
 				for s0 in sim.S.staff: s0.fat = 96.0
 				if not keep_w: dbg_watch = "s_" + dbg_staff
 			print("DEMO ", dbg_demo, " rooms ", sim.rooms_of(dbg_demo).size(), " routed ", n)
+		if dbg_dz > 0 and sim.D.dis.has("diarrhea"):
+			# debug-only (screenshots): a few waiting patients get diarrhea and need the toilet soon
+			if sim.rooms_of("toilet").is_empty() and ap: sim.S.money += 20000; ap.tryBuild("toilet")
+			var n2 = 0
+			for p in sim.S.pats:
+				if n2 < dbg_dz and p.state == "queue" and not p.get("healed"):
+					p.dis = "diarrhea"; p.dzInit = true; p.wc = 0.0; p.wcAt = 3.0 + n2 * 14.0; p.wcDone = true; n2 += 1
+					if view and view.puppets.has(p.id): view.puppets[p.id].queue_free(); view.puppets.erase(p.id)
+			print("DZ ", n2, " toilets ", sim.rooms_of("toilet").size())
 		if dbg_rbench > 0 and not sim.rooms_of("reception").is_empty():
 			var rr = sim.rooms_of("reception")[0]
 			var o = sim.doorOut(rr)
@@ -134,6 +145,9 @@ func _ready() -> void:
 			var f = dbg_focus.split(",")
 			if dbg_focus == "ent": cam.focus = Vector3(sim.S.ent.x + .5, 0, sim.S.h - 2.0)
 			elif dbg_focus == "leaf": pass
+			elif dbg_focus == "wc" and not sim.rooms_of("toilet").is_empty():
+				var wsp = sim.rooms_of("toilet")[0].sp.patient
+				cam.focus = Vector3(wsp.x + .5, 0, wsp.y + 1.0)
 			elif dbg_focus.begins_with("door:") and not sim.rooms_of(dbg_focus.substr(5)).is_empty():
 				var rd = sim.rooms_of(dbg_focus.substr(5))[0].door
 				cam.focus = Vector3(rd.x + .5, 0, rd.y + .5)
@@ -149,6 +163,7 @@ func _parse_args() -> void:
 	for a in OS.get_cmdline_user_args():
 		if a == "--bootcheck": boot_check = true
 		elif a.begins_with("--mess="): dbg_mess = int(a.substr(7))
+		elif a.begins_with("--dz="): dbg_dz = int(a.substr(5))
 		if a.begins_with("--shot="): shot_path = a.substr(7)
 		elif a.begins_with("--frames="): shot_frames = int(a.substr(9))
 		elif a == "--auto": auto_play = true
@@ -160,7 +175,8 @@ func _parse_args() -> void:
 		elif a.begins_with("--watch="):
 			var w = a.substr(8).split(":")
 			dbg_watch = w[0]
-			if w.size() > 1: dbg_watch_q = float(w[1])
+			if w[0] in ["wc", "seat"]: dbg_watch = a.substr(8)
+			elif w.size() > 1: dbg_watch_q = float(w[1])
 		elif a.begins_with("--lv="): start_lv = int(a.substr(5))
 		elif a.begins_with("--days="): ff_days = int(a.substr(7))
 		elif a.begins_with("--campitch="):
@@ -285,6 +301,17 @@ func _process(delta: float) -> void:
 				if sim.walk(int(round(fx)), int(round(fz))): l = {"x": fx, "y": fz}
 			if dbg_mess % 3 == 0: l.v = 1
 			sim.S.litter.append(l); dbg_mess -= 1
+	if dbg_dz > 0 and sim and not sim.S.is_empty() and sim.D.dis.has("diarrhea") and Engine.get_process_frames() % 30 == 0:
+		for p in sim.S.pats:
+			if p.has("dzDbg") or p.get("healed") or not (p.state in ["seek", "queue"]): continue
+			p.dzDbg = true
+			if randf() < 0.6 and dbg_dz_n < dbg_dz * 4:
+				dbg_dz_n += 1
+				p.dis = "diarrhea"; p.dzInit = true; p.wc = 0.0; p.wcAt = randf_range(4.0, 12.0); p.wcDone = true
+				if view and view.puppets.has(p.id): view.puppets[p.id].queue_free(); view.puppets.erase(p.id)
+	if dbg_dz > 0 and OS.get_environment("DBG_WC") != "" and Engine.get_process_frames() % 120 == 0:
+		for p in sim.S.pats:
+			if p.dis == "diarrhea": print("DZP ", p.id, " ", p.state, " pos ", snappedf(p.x, .1), ",", snappedf(p.y, .1), " path ", p.path.size(), " v ", snappedf(float(p.get("v", 0)), .1), " wc ", snappedf(float(p.get("wc", 0)), .1), "/", snappedf(float(p.wcAt), .1), " room ", p.room, " need ", p.need, " th ", p.thought, " vs ", p.vs != null)
 	if boot_check and Engine.get_process_frames() % 300 == 0:
 		print("BOOT_OK frame ", Engine.get_process_frames(), " game ", not sim.S.is_empty(), " day ", sim.S.get("day", -1), " pats ", sim.S.get("pats", []).size(), " rooms ", sim.S.get("rooms", []).size(), " puppets ", get_tree().get_nodes_in_group("puppet").size(), " nodes ", get_tree().get_node_count())
 	if boot_check and Engine.get_process_frames() % 300 == 150: _bone_report()
@@ -331,7 +358,33 @@ func _process(delta: float) -> void:
 			cam.focus = Vector3(hit.x + .5, 0, hit.y + .5)
 			cam.apply()
 		dbg_watch_n += 1
-		if dbg_watch.begins_with("seat:"):
+		if dbg_watch.begins_with("wc:"):
+			# debug (screenshots): wc:run follows a diarrhea patient running to the toilet, wc:mop waits for a janitor
+			# cleaning a dirty toilet, wc:dirty waits for a dirty toilet
+			var ok = false
+			var ph = dbg_watch.substr(3)
+			if ph == "wait":
+				# someone who needs the toilet waits / grumbles while the toilet is dirty
+				if not sim.rooms_of("toilet").is_empty() and sim._wc_all_dirty():
+					var wr = sim.rooms_of("toilet")[0].sp.patient
+					for q in sim.S.pats:
+						if q.thought in ["😖", "🤢"] and q.state == "queue" and absf(q.x - wr.x) + absf(q.y - wr.y) < 9.0:
+							cam.focus = Vector3((q.x + wr.x) * .5 + .5, 0, (q.y + wr.y) * .5 + .5); cam.apply(); ok = true; break
+			elif ph == "run":
+				for q in sim.S.pats:
+					if q.get("rush") and q.state == "wc1":
+						cam.focus = Vector3(q.x + .5, 0, q.y + .5); cam.apply(); ok = true; break
+			else:
+				for r in sim.rooms_of("toilet"):
+					if not r.get("dirty"): continue
+					var cleaning = false
+					for h in sim.S.staff:
+						var tk = h.get("cl") if h.get("cl") else h.get("task")
+						if tk and tk.get("k") == "wc" and is_same(tk.get("o"), r) and h.get("mop"): cleaning = true
+					if ph == "dirty" or cleaning:
+						cam.focus = Vector3(r.sp.patient.x + .5, 0, r.sp.patient.y + 1.0); cam.apply(); ok = true; break
+			if shot_frames == 1 and not ok and dbg_watch_n < dbg_wmax: shot_frames = 2
+		elif dbg_watch.begins_with("seat:"):
 			# debug: follow someone seated on a given seat kind (sofa / chair / bench ...)
 			var ok = false
 			if dbg_watch_n % 120 == 0:

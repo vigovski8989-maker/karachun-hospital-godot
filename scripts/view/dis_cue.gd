@@ -40,6 +40,7 @@ const BEH := {
 	"bagpipelungs": {"mv": "chest", "per": [1.1, 1.8], "dur": 1.0, "ic": "x_note", "at": "head", "cont": true, "beat": 3.0},
 	"gourmetstomach": {"mv": "bend", "per": [3.5, 6], "dur": 1.8, "ic": "x_oyster", "at": "mouth"},
 	"lovesickheart": {"mv": "chest", "per": [1.0, 1.8], "dur": 1.0, "ic": "x_heart", "at": "chest", "cont": true, "beat": 3.2},
+	"diarrhea": {"mv": "belly", "per": [2.5, 4.5], "dur": 2.2, "ic": "x_gas", "at": "belly", "waddle": true, "slump": 0.12},
 	"sneezykidney": {"mv": "sneeze", "per": [3, 5], "dur": 1.2, "ic": "x_sneeze", "at": "nose", "burst": 3, "hop": true},
 }
 static var _tex := {}
@@ -351,6 +352,10 @@ static func bones(p: CharPuppet) -> void:
 			var beat = pow(maxf(0.0, sin(T * float(b.get("beat", 3.0)))), 6.0)
 			if live: _rot(p, "spine_03", side, 0.0); _scale_chest(p, 1.0 + 0.05 * beat)
 			lean += 0.1 * env
+	# 1.0.0 diarrhea: knock-kneed waddle (hip sway) and a hunch while hurrying to the toilet
+	if b.get("waddle", false) and live and not p.seated:
+		roll += sin(T * 6.5 + c.ph) * (0.09 if p.rush_vis else 0.05)
+		if p.rush_vis: lean += 0.22
 	if lean != 0.0:
 		_rot(p, "spine_01", side, lean * 0.3); _rot(p, "spine_02", side, lean * 0.4); _rot(p, "spine_03", side, lean * 0.3)
 	if head_lean != 0.0:
@@ -367,9 +372,10 @@ static func bones(p: CharPuppet) -> void:
 	if mv == "yawn" and env > 0.01: _reach_s(p, "upperarm_r", "hand_r", hw + gfwd * 0.1 + Vector3(0, -0.02, 0), env)
 	elif mv == "scratch" and env > 0.01: _reach_s(p, "upperarm_r", "hand_r", hw + gright * 0.11 + Vector3(0, 0.0 + 0.03 * sin(T * 16.0), 0.03), env)
 	elif mv == "ear" and env > 0.01: _reach_s(p, "upperarm_r", "hand_r", hw + gright * 0.15 + Vector3(0, -0.02, 0.0), env)
-	elif mv == "belly" and env > 0.01:
+	elif mv == "belly" and (env > 0.01 or p.rush_vis):
+		var eb = maxf(env, 0.85 if p.rush_vis else 0.0)
 		var bp = p.global_position + Vector3(0, 0.98, 0) + gfwd * 0.2
-		_reach_s(p, "upperarm_r", "hand_r", bp - gright * 0.0 + gright * 0.08, env); _reach_s(p, "upperarm_l", "hand_l", bp - gright * 0.08, env)
+		_reach_s(p, "upperarm_r", "hand_r", bp - gright * 0.0 + gright * 0.08, eb); _reach_s(p, "upperarm_l", "hand_l", bp - gright * 0.08, eb)
 	elif mv == "chest" and env > 0.01:
 		var cp = p.global_position + Vector3(0, 1.28, 0) + gfwd * 0.18
 		_reach_s(p, "upperarm_r", "hand_r", cp + gright * 0.03, env)

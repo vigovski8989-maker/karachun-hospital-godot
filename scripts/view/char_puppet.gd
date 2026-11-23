@@ -580,6 +580,8 @@ var vw_home_pts = []
 var nav_pos = null
 var retch_t = 0.0
 var mop_node: Node3D
+var mop_target = null
+var rush_vis = false
 static var _dbg_thru = OS.get_environment("DBG_THRU") != ""
 var vel = Vector3.ZERO
 var _prev_tgt = Vector3.INF
@@ -831,6 +833,15 @@ func _mop() -> Node3D:
 		mop_node.top_level = true
 		add_child(mop_node)
 	return mop_node
+func _mop_spot(sim, e):
+	var t = e.get("cl") if e.get("cl") else e.get("task")
+	if t == null: return null
+	var o = t.get("o")
+	if t.get("k") == "clean" and o is Dictionary and o.has("x"):
+		return Vector3(float(o.x) + 0.5, 0, float(o.y) + 0.5)
+	if t.get("k") == "wc" and o is Dictionary and o.get("sp") and o.sp.get("patient"):
+		return Vector3(float(o.sp.patient.x) + 0.5, 0, float(o.sp.patient.y) + 0.5)
+	return null
 func _mop_place() -> void:
 	var hi = skel.find_bone("hand_r")
 	if hi < 0: return
@@ -838,7 +849,8 @@ func _mop_place() -> void:
 	var f: Vector3 = global_basis * Vector3(0, 0, 1)
 	var r: Vector3 = -global_basis.x
 	var T = Time.get_ticks_msec() / 1000.0
-	var tip: Vector3 = global_position + f * 0.75 + r * (0.3 * sin(T * 3.2 + float(eid)))
+	var c0: Vector3 = mop_target if mop_target != null else global_position + f * 0.75
+	var tip: Vector3 = c0 + r * (0.22 * sin(T * 3.2 + float(eid))) + f * (0.06 * cos(T * 6.4 + float(eid)))
 	tip.y = 0.06
 	var v: Vector3 = hand - tip
 	var y: Vector3 = v.normalized()
@@ -885,6 +897,8 @@ func sync(sim, e: Dictionary, gdt: float, view) -> void:
 	var hose_to = null
 	var show_tube = false
 	var want_mop = false
+	rush_vis = e.get("rush") == true and st == "wc1"
+	_sync_thought(e)
 	retch_t = maxf(0.0, retch_t - gdt)
 	reach_r = Vector3.INF; reach_world = Vector3.INF; reach_w = 0.0; reach_left = false; clip_w = 0.0
 	seated = vs != null
@@ -1010,6 +1024,22 @@ func sync(sim, e: Dictionary, gdt: float, view) -> void:
 		anim = "Walk"; spd = 0.5
 	elif is_staff and e.get("mop"):
 		anim = "Push"; want_mop = true
+		# 1.0.0: stand next to the mess (not on it) facing it, so the mop head wipes right over the puddle / litter / toilet
+		var M = _mop_spot(sim, e)
+		if M != null:
+			mop_target = M
+			var dv: Vector3 = M - tgt; dv.y = 0
+			var dn: Vector3 = dv.normalized() if dv.length() > 0.2 else Vector3(sin(yaw), 0, cos(yaw))
+			var B = M - dn * 0.72
+			if view:
+				for k in 8:
+					var c = M - dn.rotated(Vector3.UP, (k + 1) / 2 * (PI / 4) * (1 if k % 2 == 0 else -1)) * 0.72 if k > 0 else B
+					if not view.nav_blocked(int(floor(c.x)), int(floor(c.z))): B = c; break
+			tgt = B
+			var tk = e.get("cl") if e.get("cl") else e.get("task")
+			if tk and tk.get("k") == "wc": mop_target = M + (B - M).normalized() * 0.3   # the floor round the bowl
+			var fm: Vector3 = M - B
+			yaw = atan2(fm.x, fm.z)
 	elif is_staff and e.type == "handyman" and st == "do":
 		anim = "Fixing_Kneeling"
 	elif is_staff and e.type == "orderly" and st == "pick":
@@ -1454,3 +1484,29 @@ static func rot_global(sk: Skeleton3D, bi: int, q: Quaternion) -> void:
 func _patient_in_room(sim, s: Dictionary) -> bool:
 	var r = sim.room_by_id(s.get("room"))
 	return r != null and r.busy != null
+
+
+# 1.0.0: toilet thoughts (sim p.thought) as a small bubble beside the head: 🚽 needs it / rushing,
+# 😖 diarrhea and no clean toilet, 🤢 every toilet is dirty
+const THOUGHT_ICON := {"🚽": "th_wc", "😖": "th_urgent", "🤢": "th_dirty"}
+var th_bubble: Sprite3D = null
+var th_key := ""
+func _sync_thought(e) -> void:
+	if is_staff: return
+	var k = str(e.get("thought")) if e.get("thought") != null else ""
+	if not THOUGHT_ICON.has(k) or not (e.get("state") in ["queue", "wc1", "seek", "enter"]): k = ""
+	if k == th_key: return
+	th_key = k
+	if k == "":
+		if th_bubble: th_bubble.visible = false
+		return
+	if th_bubble == null:
+		th_bubble = Sprite3D.new()
+		th_bubble.pixel_size = 0.0042
+		th_bubble.billboard = BaseMaterial3D.BILLBOARD_ENABLED
+		th_bubble.shaded = false; th_bubble.double_sided = true; th_bubble.alpha_cut = SpriteBase3D.ALPHA_CUT_DISABLED
+		th_bubble.position = Vector3(0.38, 2.15, 0)
+		th_bubble.render_priority = 1
+		add_child(th_bubble)
+	th_bubble.texture = load("res://assets/icons/%s.png" % THOUGHT_ICON[k])
+	th_bubble.visible = true
